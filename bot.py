@@ -10,9 +10,9 @@ from threading import Thread
 
 TOKEN = os.getenv("TOKEN")
 ADMIN_ROLE = "Deadly"
-HR_ROLE = "HR"
-BANK_ROLE = "Доступ к Банку"
-DIS_ROLE = "Dis"
+HR_ROLE = "Recruiter"
+BANK_ROLE = "Cash"
+DIS_ROLE = "Discipline"
 PREFIX = "!"
 
 # ID роли, которая будет отмечаться при создании контракта
