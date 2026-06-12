@@ -68,7 +68,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS disciplinary_actions (
     date TEXT
 )''')
 
-# Миграции
+# Миграции старых таблиц
 try:
     c.execute("ALTER TABLE family_members ADD COLUMN discord_id INTEGER")
 except:
@@ -379,7 +379,6 @@ async def contract(ctx, title: str, *, args: str = ""):
     # Пытаемся получить роль
     role = ctx.guild.get_role(CONTRACT_NOTIFY_ROLE_ID)
     if role is None:
-        print(f"Роль {CONTRACT_NOTIFY_ROLE_ID} не найдена")
         role_mention = ""
     elif not role.mentionable:
         await ctx.send("⚠️ Роль для уведомлений не упоминаема. Контракт создан без тега.")
@@ -387,7 +386,7 @@ async def contract(ctx, title: str, *, args: str = ""):
     else:
         role_mention = role.mention
 
-    await ctx.send(f'{role_mention}\n📝 Контракт "{title}" создан.\nУчастники: {participants_db}\nСрок: {due_date}\nВекселей: {bills}')
+    await ctx.send(f'{role_mention}\n📝 Контракт "{title}" ожидает подтверждения.\nУчастники: {participants_db}\nСрок: {due_date}\nВекселей: {bills}')
 
 @bot.command(name="дв")
 @commands.check(has_dis_access)
