@@ -15,8 +15,8 @@ BANK_ROLE = "Доступ к Банку"
 DIS_ROLE = "Dis"
 PREFIX = "!"
 
-# ID роли, которая упоминается при создании контракта
-CONTRACT_NOTIFY_ROLE_ID = 1514999847630012517
+# ID роли, которая будет отмечаться при создании контракта
+CONTRACT_NOTIFY_ROLE_ID = 1473705347020623943
 
 conn = sqlite3.connect('gta_rp.db')
 c = conn.cursor()
@@ -375,7 +375,18 @@ async def contract(ctx, title: str, *, args: str = ""):
     c.execute("INSERT INTO contracts (title, participants, due_date, bills, created_by, created_at) VALUES (?,?,?,?,?,?)",
               (title, participants_db, due_date, bills, str(ctx.author), datetime.datetime.now().isoformat()))
     conn.commit()
-    role_mention = f'<@&{CONTRACT_NOTIFY_ROLE_ID}>'
+
+    # Пытаемся получить роль
+    role = ctx.guild.get_role(CONTRACT_NOTIFY_ROLE_ID)
+    if role is None:
+        print(f"Роль {CONTRACT_NOTIFY_ROLE_ID} не найдена")
+        role_mention = ""
+    elif not role.mentionable:
+        await ctx.send("⚠️ Роль для уведомлений не упоминаема. Контракт создан без тега.")
+        role_mention = ""
+    else:
+        role_mention = role.mention
+
     await ctx.send(f'{role_mention}\n📝 Контракт "{title}" создан.\nУчастники: {participants_db}\nСрок: {due_date}\nВекселей: {bills}')
 
 @bot.command(name="дв")
