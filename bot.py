@@ -8,8 +8,9 @@ from flask import Flask
 from threading import Thread
 
 # ---------- НАСТРОЙКИ ----------
-TOKEN = os.getenv("TOKEN")  # Токен будет передан Render'ом, здесь не пишем!
-ADMIN_ROLE_NAME = "Разработчик"
+TOKEN = os.getenv("TOKEN")
+ADMIN_ROLE_NAME = "Deadly"   # полный доступ
+HR_ROLE_NAME = "HR"          # управление семьёй
 PREFIX = "!"
 
 # ---------- БАЗА ДАННЫХ ----------
@@ -18,6 +19,7 @@ c = conn.cursor()
 
 c.execute('''CREATE TABLE IF NOT EXISTS family_members (
     nickname TEXT PRIMARY KEY,
+    discord_id INTEGER UNIQUE,
     joined_at TEXT
 )''')
 
@@ -47,8 +49,19 @@ c.execute('''CREATE TABLE IF NOT EXISTS contracts (
     title TEXT,
     participants TEXT,
     due_date TEXT,
+    bills INTEGER DEFAULT 0,
     created_by TEXT,
     created_at TEXT
+)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS disciplinary_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nickname TEXT,
+    discord_id INTEGER,
+    action_type TEXT,
+    reason TEXT,
+    issued_by TEXT,
+    date TEXT
 )''')
 conn.commit()
 
@@ -57,8 +70,21 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 
+# --- ПРОВЕРКИ ---
 def is_admin(ctx):
+    """Роль Deadly."""
     return any(role.name == ADMIN_ROLE_NAME for role in ctx.author.roles)
+
+def is_hr_or_admin(ctx):
+    """Роль HR или Deadly."""
+    return any(role.name in (HR_ROLE_NAME, ADMIN_ROLE_NAME) for role in ctx.author.roles)
+
+def in_family(ctx):
+    """Доступно HR, Deadly или добавленным в семью."""
+    if is_hr_or_admin(ctx):
+        return True
+    c.execute("SELECT * FROM family_members WHERE discord_id=?", (ctx.author.id,))
+    return c.fetchone() is not None
 
 def get_player(nickname):
     c.execute("SELECT nickname FROM bank WHERE nickname=?", (nickname,))
@@ -74,31 +100,54 @@ def check_auto_return():
     c.execute("UPDATE vehicles SET status='свободен', taken_by=NULL, taken_at=NULL, return_at=NULL WHERE status='занят' AND return_at <= ?", (now,))
     conn.commit()
 
-# ---------- КОМАНДЫ (короткие версии) ----------
+# ============== КОМАНДЫ ==============
+
+# 👥 СЕМЬЯ
 @bot.command(name="добавить-в-семью", aliases=["добавить_в_семью"])
-@commands.check(is_admin)
-async def add_family(ctx, nickname: str):
+@commands.check(is_hr_or_admin)
+async def add_family(ctx, member: discord.Member, *, nickname: str):
+    """!добавить-в-семью @User ИгровойНик"""
     nickname = nickname.replace("_", " ")
     if not get_player(nickname):
-        return await ctx.send(f'❌ Игрок `{nickname}` не найден в системе.')
+        return await ctx.send(f'❌ Игрок `{nickname}` не найден в банке. Сначала создайте счёт.')
+    c.execute("SELECT * FROM family_members WHERE discord_id=?", (member.id,))
+    if c.fetchone():
+        return await ctx.send(f'⚠️ {member.mention} уже в семье.')
     c.execute("SELECT * FROM family_members WHERE nickname=?", (nickname,))
     if c.fetchone():
-        return await ctx.send(f'⚠️ Игрок `{nickname}` уже в семье.')
-    c.execute("INSERT INTO family_members (nickname, joined_at) VALUES (?, ?)",
-              (nickname, datetime.datetime.now().isoformat()))
+        return await ctx.send(f'⚠️ Ник `{nickname}` уже закреплён за другим участником.')
+    c.execute("INSERT INTO family_members (nickname, discord_id, joined_at) VALUES (?, ?, ?)",
+              (nickname, member.id, datetime.datetime.now().isoformat()))
     conn.commit()
-    await ctx.send(f'✅ Игрок `{nickname}` добавлен в семью. (Адм: {ctx.author.mention})')
+    await ctx.send(f'✅ {member.mention} (`{nickname}`) добавлен в семью. (Администратор: {ctx.author.mention})')
 
 @bot.command(name="удалить-из-семьи", aliases=["удалить_из_семьи"])
-@commands.check(is_admin)
-async def remove_family(ctx, nickname: str):
-    nickname = nickname.replace("_", " ")
-    c.execute("DELETE FROM family_members WHERE nickname=?", (nickname,))
+@commands.check(is_hr_or_admin)
+async def remove_family(ctx, member: discord.Member):
+    """!удалить-из-семьи @User"""
+    c.execute("DELETE FROM family_members WHERE discord_id=?", (member.id,))
     if c.rowcount == 0:
-        return await ctx.send(f'❌ Игрок `{nickname}` не состоит в семье.')
+        return await ctx.send(f'❌ {member.mention} не состоит в семье.')
     conn.commit()
-    await ctx.send(f'✅ Игрок `{nickname}` удалён из семьи. (Адм: {ctx.author.mention})')
+    await ctx.send(f'✅ {member.mention} удалён из семьи. (Администратор: {ctx.author.mention})')
 
+@bot.command(name="семья")
+@commands.check(in_family)
+async def family_list(ctx):
+    """!семья — список всех членов семьи с привязкой Discord."""
+    c.execute("SELECT nickname, discord_id, joined_at FROM family_members")
+    rows = c.fetchall()
+    if not rows:
+        return await ctx.send('👪 Семья пуста.')
+    lines = []
+    for nick, disc_id, joined in rows:
+        member = ctx.guild.get_member(disc_id) if ctx.guild else None
+        mention = member.mention if member else f'<@{disc_id}>'
+        lines.append(f'{mention} — `{nick}`')
+    embed = discord.Embed(title='👥 Семья', description='\n'.join(lines), color=0x00ff00)
+    await ctx.send(embed=embed)
+
+# 🚗 АВТОМОБИЛИ (доступны членам семьи)
 @bot.command(name="добавить-авто", aliases=["добавить_авто"])
 @commands.check(is_admin)
 async def add_car(ctx, nickname: str, model: str, plate: str):
@@ -123,6 +172,7 @@ async def remove_car(ctx, plate: str):
     await ctx.send(f'🗑️ Машина с госномером `{plate}` удалена. (Адм: {ctx.author.mention})')
 
 @bot.command(name="инфо-авто")
+@commands.check(in_family)
 async def car_info(ctx):
     check_auto_return()
     c.execute("SELECT id, owner_nick, model, plate, status, taken_by, return_at FROM vehicles")
@@ -173,7 +223,9 @@ async def return_car(ctx, car_id: int):
     conn.commit()
     await ctx.send(f'✅ Авто `{plate}` возвращено. (Адм: {ctx.author.mention})')
 
+# 📦 СКЛАД (члены семьи)
 @bot.command(name="склад-инфо", aliases=["складинфо"])
+@commands.check(in_family)
 async def warehouse_info(ctx):
     c.execute("SELECT item, amount FROM warehouse WHERE amount > 0")
     items = c.fetchall()
@@ -214,6 +266,7 @@ async def put_to_warehouse(ctx, nickname: str = None, item: str = None, amount: 
     conn.commit()
     await ctx.send(f'✅ `{nickname}` положил {amount} x {item} на склад. (Адм: {ctx.author.mention})')
 
+# 💰 БАНК (члены семьи + скриншоты)
 @bot.command(name="банк-пополнить", aliases=["банк_пополнить"])
 @commands.check(is_admin)
 async def bank_add(ctx, nickname: str = None, amount: int = None, *, reason: str = "Без причины"):
@@ -263,22 +316,67 @@ async def bank_remove(ctx, nickname: str = None, amount: int = None, *, reason: 
     msg = f'💸 Со счета `{nickname}` снято {amount}. Причина: {reason}. Баланс: {new_balance}. (Адм: {ctx.author.mention})'
     await ctx.send(msg, files=files if files else None)
 
+# 📝 КОНТРАКТЫ (админ) + векселя
 @bot.command(name="контракт-взять", aliases=["контракт_взять"])
 @commands.check(is_admin)
-async def take_contract(ctx, title: str = None, participants: str = None, due_date: str = None):
+async def take_contract(ctx, title: str = None, participants: str = None, due_date: str = None, bills: int = 0):
     if None in (title, participants, due_date):
-        return await ctx.send('ℹ️ Использование: `!контракт-взять "Название" "Участники" ДД.ММ.ГГГГ ЧЧ:ММ`')
-    c.execute("INSERT INTO contracts (title, participants, due_date, created_by, created_at) VALUES (?, ?, ?, ?, ?)",
-              (title, participants, due_date, str(ctx.author), datetime.datetime.now().isoformat()))
+        return await ctx.send('ℹ️ Использование: `!контракт-взять "Название" "Участники" ДД.ММ.ГГГГ ЧЧ:ММ [векселя]`')
+    c.execute("INSERT INTO contracts (title, participants, due_date, bills, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              (title, participants, due_date, bills, str(ctx.author), datetime.datetime.now().isoformat()))
     conn.commit()
-    await ctx.send(f'📝 Контракт "{title}" создан. Участники: {participants}. Выполнить до: {due_date}. (Создал: {ctx.author.mention})')
+    await ctx.send(f'📝 Контракт "{title}" создан.\nУчастники: {participants}\nВыполнить до: {due_date}\nВекселей: {bills}\nСоздал: {ctx.author.mention}')
 
+# ⚠️ ДИСЦИПЛИНАРНЫЕ ВЗЫСКАНИЯ (только Deadly)
+@bot.command(name="дв", aliases=["ДВ"])
+@commands.check(is_admin)
+async def disciplinary_action(ctx, nickname: str, action_type: str, *, reason: str):
+    """!дв {ник} {тип} {причина}. Типы: предупреждение, выговор, 2выговора, warn, увал."""
+    action_type = action_type.lower()
+    allowed = ["предупреждение", "выговор", "2выговора", "warn", "увал"]
+    if action_type not in allowed:
+        return await ctx.send(f'❌ Неверный тип. Допустимые: {", ".join(allowed)}')
+    nickname = nickname.replace("_", " ")
+    ensure_player(nickname)
+    c.execute("SELECT discord_id FROM family_members WHERE nickname=?", (nickname,))
+    row = c.fetchone()
+    discord_id = row[0] if row else None
+    c.execute("INSERT INTO disciplinary_actions (nickname, discord_id, action_type, reason, issued_by, date) VALUES (?, ?, ?, ?, ?, ?)",
+              (nickname, discord_id, action_type, reason, str(ctx.author), datetime.datetime.now().isoformat()))
+    conn.commit()
+    mention = f'<@{discord_id}>' if discord_id else nickname
+    await ctx.send(f'⚠️ {mention} получил **{action_type}**.\nПричина: {reason}\nВыдал: {ctx.author.mention}')
+
+@bot.command(name="выговоры")
+@commands.check(in_family)
+async def list_actions(ctx, nickname: str = None):
+    """!выговоры {ник} — показывает историю взысканий. Без аргументов — свои."""
+    if nickname:
+        nickname = nickname.replace("_", " ")
+        c.execute("SELECT action_type, reason, issued_by, date FROM disciplinary_actions WHERE nickname=? ORDER BY date DESC", (nickname,))
+    else:
+        # Ищем ник по discord_id
+        c.execute("SELECT nickname FROM family_members WHERE discord_id=?", (ctx.author.id,))
+        row = c.fetchone()
+        if not row and not is_admin(ctx):
+            return await ctx.send('❌ Вы не в семье.')
+        nickname = row[0] if row else str(ctx.author)
+        c.execute("SELECT action_type, reason, issued_by, date FROM disciplinary_actions WHERE nickname=? ORDER BY date DESC", (nickname,))
+    rows = c.fetchall()
+    if not rows:
+        return await ctx.send(f'✅ У `{nickname}` нет выговоров.')
+    lines = [f'**{typ}** — {reason} (от {issued_by}, {date})' for typ, reason, issued_by, date in rows]
+    embed = discord.Embed(title=f'📋 Выговоры: {nickname}', description='\n'.join(lines), color=0xff0000)
+    await ctx.send(embed=embed)
+
+# ℹ️ ПОМОЩЬ (доступна всем)
 @bot.command(name="помощь", aliases=["хелп"])
 async def help_command(ctx):
     embed = discord.Embed(title="📋 Команды", color=0x00ff00,
-        description="`!добавить-в-семью`, `!удалить-из-семьи`, `!добавить-авто`, `!удалить-авто`, `!инфо-авто`, `!взять-авто`, `!вернуть-авто`, `!склад-инфо`, `!взять-со-склада`, `!положить-на-склад`, `!банк-пополнить`, `!банк-снять`, `!контракт-взять`")
+        description="`!добавить-в-семью`, `!удалить-из-семьи`, `!семья`, `!добавить-авто`, `!удалить-авто`, `!инфо-авто`, `!взять-авто`, `!вернуть-авто`, `!склад-инфо`, `!взять-со-склада`, `!положить-на-склад`, `!банк-пополнить`, `!банк-снять`, `!контракт-взять`, `!дв`, `!выговоры`")
     await ctx.send(embed=embed)
 
+# Автоматическое удаление команд
 @bot.event
 async def on_command_completion(ctx):
     try:
@@ -286,7 +384,7 @@ async def on_command_completion(ctx):
     except:
         pass
 
-# ---------- ВЕБ-СЕРВЕР ДЛЯ ПОДДЕРЖАНИЯ ЖИЗНИ НА RENDER ----------
+# ---------- ВЕБ-СЕРВЕР ДЛЯ RENDER ----------
 app = Flask(__name__)
 
 @app.route('/')
@@ -299,5 +397,5 @@ def run_web():
 
 Thread(target=run_web).start()
 
-# ---------- ЗАПУСК БОТА ----------
+# ---------- ЗАПУСК ----------
 bot.run(TOKEN)
