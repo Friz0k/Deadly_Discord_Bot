@@ -40,10 +40,12 @@ c.execute('''CREATE TABLE IF NOT EXISTS warehouse (
     amount INTEGER CHECK(amount >= 0)
 )''')
 
+# Новая структура семейного банка – одна строка с балансом
 c.execute('''CREATE TABLE IF NOT EXISTS bank (
-    id TEXT PRIMARY KEY,
     balance INTEGER DEFAULT 0
 )''')
+# Убедимся, что строка существует
+c.execute("INSERT INTO bank (balance) SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM bank)")
 
 c.execute('''CREATE TABLE IF NOT EXISTS contracts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,7 +67,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS disciplinary_actions (
     date TEXT
 )''')
 
-# миграции старых баз
+# Миграции старых баз (если столбцов ещё нет)
 try:
     c.execute("ALTER TABLE family_members ADD COLUMN discord_id INTEGER")
 except:
@@ -75,7 +77,6 @@ try:
 except:
     pass
 
-c.execute("INSERT OR IGNORE INTO bank (id, balance) VALUES ('family', 0)")
 conn.commit()
 
 intents = discord.Intents.default()
@@ -106,7 +107,7 @@ def get_member_nick(user_id):
     return row[0] if row else None
 
 def get_family_balance():
-    c.execute("SELECT balance FROM bank WHERE id='family'")
+    c.execute("SELECT balance FROM bank LIMIT 1")
     return c.fetchone()[0]
 
 def auto_return():
@@ -298,7 +299,7 @@ async def bank_balance(ctx):
 async def bank_add(ctx, amount: int, *, reason: str = ""):
     if amount <= 0:
         return await ctx.send('❌ Сумма должна быть положительной.')
-    c.execute("UPDATE bank SET balance = balance + ? WHERE id='family'", (amount,))
+    c.execute("UPDATE bank SET balance = balance + ?", (amount,))
     conn.commit()
     new_balance = get_family_balance()
     files = []
@@ -321,7 +322,7 @@ async def bank_remove(ctx, amount: int, *, reason: str = ""):
     balance = get_family_balance()
     if balance < amount:
         return await ctx.send(f'❌ Недостаточно средств. Баланс: {balance}.')
-    c.execute("UPDATE bank SET balance = balance - ? WHERE id='family'", (amount,))
+    c.execute("UPDATE bank SET balance = balance - ?", (amount,))
     conn.commit()
     new_balance = get_family_balance()
     files = []
