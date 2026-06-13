@@ -11,14 +11,17 @@ from threading import Thread
 TOKEN = os.getenv("TOKEN")
 ADMIN_ROLE = "Deadly"
 HR_ROLE = "Recruiter"
-BANK_ROLE = "Cash"
-DIS_ROLE = "Discipline"
+DIS_ROLE = "Dicipline"
 PREFIX = "!"
 
-# ID роли, которая будет отмечаться при создании контракта
 CONTRACT_NOTIFY_ROLE_ID = 1473705347020623943
 
-conn = sqlite3.connect('gta_rp.db')
+DB_DIR = '/data'
+if not os.path.exists(DB_DIR):
+    os.makedirs(DB_DIR, exist_ok=True)
+DB_PATH = os.path.join(DB_DIR, 'gta_rp.db')
+
+conn = sqlite3.connect(DB_PATH)
 c = conn.cursor()
 
 c.execute('''CREATE TABLE IF NOT EXISTS family_members (
@@ -68,7 +71,6 @@ c.execute('''CREATE TABLE IF NOT EXISTS disciplinary_actions (
     date TEXT
 )''')
 
-# Миграции старых таблиц
 try:
     c.execute("ALTER TABLE family_members ADD COLUMN discord_id INTEGER")
 except:
@@ -93,9 +95,6 @@ def has_admin(ctx):
 
 def has_hr(ctx):
     return any(r.name in (HR_ROLE, ADMIN_ROLE) for r in ctx.author.roles)
-
-def has_bank_access(ctx):
-    return any(r.name in (BANK_ROLE, ADMIN_ROLE) for r in ctx.author.roles)
 
 def has_dis_access(ctx):
     return any(r.name in (DIS_ROLE, ADMIN_ROLE) for r in ctx.author.roles)
@@ -123,13 +122,13 @@ def auto_return():
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
-        await ctx.send("❌ Недостаточно прав.")
+        await ctx.send("❌ Недостаточно прав.", delete_after=10)
     elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(f"❌ Пропущен аргумент. Используйте `!помощь`.")
+        await ctx.send(f"❌ Пропущен аргумент. Используйте `!помощь`.", delete_after=10)
     elif isinstance(error, commands.BadArgument):
-        await ctx.send(f"❌ Неверный аргумент: {error}")
+        await ctx.send(f"❌ Неверный аргумент: {error}", delete_after=10)
     else:
-        await ctx.send(f"❌ Ошибка: {str(error)}")
+        await ctx.send(f"❌ Ошибка: {str(error)}", delete_after=10)
 
 @bot.command(name="id")
 async def get_id(ctx, member: discord.Member = None):
@@ -142,10 +141,10 @@ async def add_family(ctx, discord_id: int, *, nickname: str):
     nickname = nickname.replace("_", " ")
     c.execute("SELECT * FROM family_members WHERE discord_id=?", (discord_id,))
     if c.fetchone():
-        return await ctx.send(f'⚠️ Пользователь с ID `{discord_id}` уже в семье.')
+        return await ctx.send(f'⚠️ Пользователь с ID `{discord_id}` уже в семье.', delete_after=10)
     c.execute("SELECT * FROM family_members WHERE nickname=?", (nickname,))
     if c.fetchone():
-        return await ctx.send(f'⚠️ Ник `{nickname}` уже занят.')
+        return await ctx.send(f'⚠️ Ник `{nickname}` уже занят.', delete_after=10)
     c.execute("INSERT INTO family_members (nickname, discord_id, joined_at) VALUES (?, ?, ?)",
               (nickname, discord_id, datetime.datetime.now().isoformat()))
     conn.commit()
@@ -157,7 +156,7 @@ async def remove_family(ctx, discord_id: int):
     c.execute("SELECT nickname FROM family_members WHERE discord_id=?", (discord_id,))
     row = c.fetchone()
     if not row:
-        return await ctx.send(f'❌ Пользователь с ID `{discord_id}` не найден в семье.')
+        return await ctx.send(f'❌ Пользователь с ID `{discord_id}` не найден в семье.', delete_after=10)
     nickname = row[0]
     c.execute("DELETE FROM family_members WHERE discord_id=?", (discord_id,))
     conn.commit()
@@ -169,7 +168,7 @@ async def family_list(ctx):
     c.execute("SELECT nickname, discord_id FROM family_members")
     rows = c.fetchall()
     if not rows:
-        return await ctx.send('👪 Семья пуста.')
+        return await ctx.send('👪 Семья пуста.', delete_after=10)
     lines = [f'<@{disc_id}> — `{nick}`' for nick, disc_id in rows]
     embed = discord.Embed(title='👥 Семья', description='\n'.join(lines), color=0x00ff00)
     await ctx.send(embed=embed)
@@ -179,7 +178,7 @@ async def family_list(ctx):
 async def add_car(ctx, model: str, plate: str):
     nick = get_member_nick(ctx.author.id)
     if not nick:
-        return await ctx.send('❌ Вы не в семье.')
+        return await ctx.send('❌ Вы не в семье.', delete_after=10)
     nick = nick.replace("_", " ")
     try:
         c.execute("INSERT INTO vehicles (owner_nick, model, plate) VALUES (?, ?, ?)", (nick, model, plate))
@@ -187,14 +186,14 @@ async def add_car(ctx, model: str, plate: str):
         car_id = c.lastrowid
         await ctx.send(f'🚗 {model} ({plate}) добавлен, номер {car_id}. Владелец: `{nick}`.')
     except sqlite3.IntegrityError:
-        await ctx.send(f'❌ Госномер `{plate}` уже существует.')
+        await ctx.send(f'❌ Госномер `{plate}` уже существует.', delete_after=10)
 
 @bot.command(name="удалавто")
 @commands.check(has_admin)
 async def remove_car(ctx, plate: str):
     c.execute("DELETE FROM vehicles WHERE plate=?", (plate,))
     if c.rowcount == 0:
-        return await ctx.send(f'❌ Машина с госномером `{plate}` не найдена.')
+        return await ctx.send(f'❌ Машина с госномером `{plate}` не найдена.', delete_after=10)
     conn.commit()
     await ctx.send(f'🗑️ Машина `{plate}` удалена.')
 
@@ -205,7 +204,7 @@ async def car_list(ctx):
     c.execute("SELECT id, owner_nick, model, plate, status, taken_by, return_at FROM vehicles")
     cars = c.fetchall()
     if not cars:
-        return await ctx.send('🚫 Нет машин.')
+        return await ctx.send('🚫 Нет машин.', delete_after=10)
     lines = []
     for cid, owner, model, plate, status, taken_by, ret_at in cars:
         if status == 'свободен':
@@ -220,16 +219,16 @@ async def car_list(ctx):
 async def take_car(ctx, car_id: int, hours: float = 2.0):
     nick = get_member_nick(ctx.author.id)
     if not nick:
-        return await ctx.send('❌ Вы не в семье.')
+        return await ctx.send('❌ Вы не в семье.', delete_after=10)
     nick = nick.replace("_", " ")
     auto_return()
     c.execute("SELECT status, plate FROM vehicles WHERE id=?", (car_id,))
     car = c.fetchone()
     if not car:
-        return await ctx.send(f'❌ Авто с номером `{car_id}` не найдено.')
+        return await ctx.send(f'❌ Авто с номером `{car_id}` не найдено.', delete_after=10)
     status, plate = car
     if status != 'свободен':
-        return await ctx.send(f'❌ Авто `{plate}` уже занято.')
+        return await ctx.send(f'❌ Авто `{plate}` уже занято.', delete_after=10)
     now = datetime.datetime.now()
     return_at = now + datetime.timedelta(hours=hours)
     c.execute("UPDATE vehicles SET status='занят', taken_by=?, taken_at=?, return_at=? WHERE id=?",
@@ -243,10 +242,10 @@ async def return_car(ctx, car_id: int):
     c.execute("SELECT plate, status FROM vehicles WHERE id=?", (car_id,))
     car = c.fetchone()
     if not car:
-        return await ctx.send(f'❌ Авто с номером `{car_id}` не найдено.')
+        return await ctx.send(f'❌ Авто с номером `{car_id}` не найдено.', delete_after=10)
     plate, status = car
     if status == 'свободен':
-        return await ctx.send(f'❌ Авто `{plate}` уже свободно.')
+        return await ctx.send(f'❌ Авто `{plate}` уже свободно.', delete_after=10)
     c.execute("UPDATE vehicles SET status='свободен', taken_by=NULL, taken_at=NULL, return_at=NULL WHERE id=?", (car_id,))
     conn.commit()
     await ctx.send(f'✅ Авто `{plate}` возвращено.')
@@ -257,7 +256,7 @@ async def warehouse_info(ctx):
     c.execute("SELECT item, amount FROM warehouse WHERE amount > 0")
     items = c.fetchall()
     if not items:
-        return await ctx.send('📦 Склад пуст.')
+        return await ctx.send('📦 Склад пуст.', delete_after=10)
     desc = '\n'.join(f'• {item}: {amount} шт.' for item, amount in items)
     embed = discord.Embed(title='📦 Склад', description=desc, color=0x00ff00)
     await ctx.send(embed=embed)
@@ -267,14 +266,14 @@ async def warehouse_info(ctx):
 async def take_warehouse(ctx, item: str, amount: int):
     nick = get_member_nick(ctx.author.id)
     if not nick:
-        return await ctx.send('❌ Вы не в семье.')
+        return await ctx.send('❌ Вы не в семье.', delete_after=10)
     nick = nick.replace("_", " ")
     if amount <= 0:
-        return await ctx.send('❌ Количество > 0.')
+        return await ctx.send('❌ Количество > 0.', delete_after=10)
     c.execute("SELECT amount FROM warehouse WHERE item=?", (item,))
     row = c.fetchone()
     if not row or row[0] < amount:
-        return await ctx.send(f'❌ Недостаточно `{item}` на складе.')
+        return await ctx.send(f'❌ Недостаточно `{item}` на складе.', delete_after=10)
     c.execute("UPDATE warehouse SET amount = amount - ? WHERE item=?", (amount, item))
     conn.commit()
     await ctx.send(f'✅ `{nick}` забрал {amount} x {item} со склада.')
@@ -284,10 +283,10 @@ async def take_warehouse(ctx, item: str, amount: int):
 async def put_warehouse(ctx, item: str, amount: int):
     nick = get_member_nick(ctx.author.id)
     if not nick:
-        return await ctx.send('❌ Вы не в семье.')
+        return await ctx.send('❌ Вы не в семье.', delete_after=10)
     nick = nick.replace("_", " ")
     if amount <= 0:
-        return await ctx.send('❌ Количество > 0.')
+        return await ctx.send('❌ Количество > 0.', delete_after=10)
     c.execute("INSERT INTO warehouse (item, amount) VALUES (?, ?) ON CONFLICT(item) DO UPDATE SET amount = amount + ?",
               (item, amount, amount))
     conn.commit()
@@ -303,10 +302,10 @@ async def bank_balance(ctx):
 @commands.check(is_in_family)
 async def bank_add(ctx, amount: int, *, reason: str = ""):
     if amount <= 0:
-        return await ctx.send('❌ Сумма должна быть положительной.')
+        return await ctx.send('❌ Сумма должна быть положительной.', delete_after=10)
     nick = get_member_nick(ctx.author.id)
     if not nick:
-        return await ctx.send('❌ Вы не привязаны к семье. Используйте !добавсемья.')
+        return await ctx.send('❌ Вы не привязаны к семье.', delete_after=10)
     nick = nick.replace("_", " ")
     c.execute("UPDATE bank SET balance = balance + ?", (amount,))
     conn.commit()
@@ -324,17 +323,17 @@ async def bank_add(ctx, amount: int, *, reason: str = ""):
     await ctx.send(msg, files=files if files else None)
 
 @bot.command(name="снять")
-@commands.check(has_bank_access)
+@commands.check(is_in_family)
 async def bank_remove(ctx, amount: int, *, reason: str = ""):
     if amount <= 0:
-        return await ctx.send('❌ Сумма должна быть положительной.')
+        return await ctx.send('❌ Сумма должна быть положительной.', delete_after=10)
     nick = get_member_nick(ctx.author.id)
     if not nick:
-        return await ctx.send('❌ Вы не привязаны к семье.')
+        return await ctx.send('❌ Вы не привязаны к семье.', delete_after=10)
     nick = nick.replace("_", " ")
     balance = get_family_balance()
     if balance < amount:
-        return await ctx.send(f'❌ Недостаточно средств. Баланс: {balance}.')
+        return await ctx.send(f'❌ Недостаточно средств. Баланс: {balance}.', delete_after=10)
     c.execute("UPDATE bank SET balance = balance - ?", (amount,))
     conn.commit()
     new_balance = get_family_balance()
@@ -354,20 +353,20 @@ async def bank_remove(ctx, amount: int, *, reason: str = ""):
 @commands.check(has_admin)
 async def contract(ctx, title: str, *, args: str = ""):
     if not args.strip():
-        return await ctx.send('ℹ️ Использование: `!контракт "Название" Участник1 Участник2 ... ДД.ММ.ГГГГ ЧЧ:ММ [векселя]`')
+        return await ctx.send('ℹ️ Использование: `!контракт "Название" Участник1 Участник2 ... ДД.ММ.ГГГГ ЧЧ:ММ [векселя]`', delete_after=10)
     parts = args.split()
     if len(parts) < 2:
-        return await ctx.send('❌ Укажите дату (ДД.ММ.ГГГГ) и время (ЧЧ:ММ).')
+        return await ctx.send('❌ Укажите дату (ДД.ММ.ГГГГ) и время (ЧЧ:ММ).', delete_after=10)
     bills = 0
     if parts[-1].isdigit():
         bills = int(parts[-1])
         parts = parts[:-1]
     if len(parts) < 2:
-        return await ctx.send('❌ Нужна дата и время.')
+        return await ctx.send('❌ Нужна дата и время.', delete_after=10)
     time_str = parts[-1]
     date_str = parts[-2]
     if not re.match(r'\d{2}\.\d{2}\.\d{4}', date_str) or not re.match(r'\d{2}:\d{2}', time_str):
-        return await ctx.send('❌ Неверный формат даты/времени. Ожидается ДД.ММ.ГГГГ ЧЧ:ММ.')
+        return await ctx.send('❌ Неверный формат даты/времени. Ожидается ДД.ММ.ГГГГ ЧЧ:ММ.', delete_after=10)
     participants = ' '.join(parts[:-2])
     due_date = f"{date_str} {time_str}"
     parts_list = participants.split()
@@ -376,12 +375,11 @@ async def contract(ctx, title: str, *, args: str = ""):
               (title, participants_db, due_date, bills, str(ctx.author), datetime.datetime.now().isoformat()))
     conn.commit()
 
-    # Пытаемся получить роль
     role = ctx.guild.get_role(CONTRACT_NOTIFY_ROLE_ID)
     if role is None:
         role_mention = ""
     elif not role.mentionable:
-        await ctx.send("⚠️ Роль для уведомлений не упоминаема. Контракт создан без тега.")
+        await ctx.send("⚠️ Роль для уведомлений не упоминаема. Контракт создан без тега.", delete_after=10)
         role_mention = ""
     else:
         role_mention = role.mention
@@ -394,16 +392,33 @@ async def dv_add(ctx, nickname: str, action_type: str, *, reason: str):
     action_type = action_type.lower()
     allowed = ["предупреждение", "выговор", "2выговора", "warn", "увал"]
     if action_type not in allowed:
-        return await ctx.send(f'❌ Неверный тип. Допустимые: {", ".join(allowed)}')
+        return await ctx.send(f'❌ Неверный тип. Допустимые: {", ".join(allowed)}', delete_after=10)
     nickname = nickname.replace("_", " ")
+
+    has_image = False
+    for att in ctx.message.attachments:
+        if att.content_type and att.content_type.startswith("image/"):
+            has_image = True
+            break
+    if not has_image:
+        return await ctx.send('❌ Необходимо прикрепить скриншот.', delete_after=10)
+
     c.execute("SELECT discord_id FROM family_members WHERE nickname=?", (nickname,))
     row = c.fetchone()
     discord_id = row[0] if row else None
+
+    files = []
+    for att in ctx.message.attachments:
+        if att.content_type and att.content_type.startswith("image/"):
+            img_bytes = await att.read()
+            new_name = att.filename.replace("_", "-")
+            files.append(discord.File(fp=io.BytesIO(img_bytes), filename=new_name))
+
     c.execute("INSERT INTO disciplinary_actions (nickname, discord_id, action_type, reason, issued_by, date) VALUES (?,?,?,?,?,?)",
               (nickname, discord_id, action_type, reason, str(ctx.author), datetime.datetime.now().isoformat()))
     conn.commit()
     mention = f'<@{discord_id}>' if discord_id else nickname
-    await ctx.send(f'⚠️ {mention} получил **{action_type}**.\nПричина: {reason}')
+    await ctx.send(f'⚠️ {mention} получил **{action_type}**.\nПричина: {reason}\nВыдал: {ctx.author.mention}', files=files if files else None)
 
 @bot.command(name="выговоры")
 @commands.check(is_in_family)
@@ -413,11 +428,11 @@ async def dv_list(ctx, nickname: str = None):
     else:
         nickname = get_member_nick(ctx.author.id)
         if not nickname:
-            return await ctx.send('❌ Укажите ник или будьте в семье.')
+            return await ctx.send('❌ Укажите ник или будьте в семье.', delete_after=10)
     c.execute("SELECT action_type, reason, issued_by, date FROM disciplinary_actions WHERE nickname=? ORDER BY date DESC", (nickname,))
     rows = c.fetchall()
     if not rows:
-        return await ctx.send(f'✅ У `{nickname}` нет выговоров.')
+        return await ctx.send(f'✅ У `{nickname}` нет выговоров.', delete_after=10)
     lines = [f'**{t}** — {r} (от {i}, {d})' for t, r, i, d in rows]
     embed = discord.Embed(title=f'📋 Выговоры: {nickname}', description='\n'.join(lines), color=0xff0000)
     await ctx.send(embed=embed)
@@ -428,7 +443,7 @@ async def dv_remove(ctx, nickname: str, *, reason: str):
     nickname = nickname.replace("_", " ")
     c.execute("DELETE FROM disciplinary_actions WHERE id = (SELECT id FROM disciplinary_actions WHERE nickname=? ORDER BY date DESC LIMIT 1)", (nickname,))
     if c.rowcount == 0:
-        return await ctx.send(f'❌ У `{nickname}` нет выговоров.')
+        return await ctx.send(f'❌ У `{nickname}` нет выговоров.', delete_after=10)
     conn.commit()
     c.execute("SELECT discord_id FROM family_members WHERE nickname=?", (nickname,))
     row = c.fetchone()
@@ -442,9 +457,9 @@ async def help_cmd(ctx):
     embed.add_field(name="👥 Семья", value="`!добавсемья ID Ник`\n`!удалсемья ID`\n`!семья`\n`!id @user`", inline=False)
     embed.add_field(name="🚗 Авто", value="`!добававто Модель Госномер`\n`!удалавто Госномер`\n`!авто`\n`!взятьавто Номер [часы]`\n`!вернутьавто Номер`", inline=False)
     embed.add_field(name="📦 Склад", value="`!склад`\n`!взятьсклад Предмет Кол-во`\n`!положитьсклад Предмет Кол-во`", inline=False)
-    embed.add_field(name="💰 Банк", value="`!банк` — баланс семьи\n`!пополнить Сумма [Причина]` — любой член семьи\n`!снять Сумма [Причина]` — требуется роль «Доступ к Банку»", inline=False)
+    embed.add_field(name="💰 Банк", value="`!банк` — баланс семьи\n`!пополнить Сумма [Причина]`\n`!снять Сумма [Причина]` — любой член семьи", inline=False)
     embed.add_field(name="📝 Контракты", value="`!контракт \"Название\" Участник1 Участник2 ... ДД.ММ.ГГГГ ЧЧ:ММ [векселя]`\n(отмечается <@&роль>)", inline=False)
-    embed.add_field(name="⚠️ Дисциплина", value="`!дв Ник Тип Причина`\n`!выговоры [ник]`\n`!снятьдв Ник Причина`", inline=False)
+    embed.add_field(name="⚠️ Дисциплина", value="`!дв Ник Тип Причина` (обязательно прикрепить скриншот)\n`!выговоры [ник]`\n`!снятьдв Ник Причина`", inline=False)
     await ctx.send(embed=embed)
 
 @bot.event
