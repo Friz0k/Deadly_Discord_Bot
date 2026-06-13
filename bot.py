@@ -9,17 +9,15 @@ from flask import Flask
 from threading import Thread
 
 TOKEN = os.getenv("TOKEN")
-ADMIN_ROLE = "Deadly"
+ADMIN_ROLE = "Тех. Состав"
 HR_ROLE = "Recruiter"
 DIS_ROLE = "Dicipline"
+FAMILY_ACCESS_ROLE = "Deadly"
 PREFIX = "!"
 
 CONTRACT_NOTIFY_ROLE_ID = 1473705347020623943
 
-DB_DIR = '/data'
-if not os.path.exists(DB_DIR):
-    os.makedirs(DB_DIR, exist_ok=True)
-DB_PATH = os.path.join(DB_DIR, 'gta_rp.db')
+DB_PATH = 'gta_rp.db'
 
 conn = sqlite3.connect(DB_PATH)
 c = conn.cursor()
@@ -99,8 +97,11 @@ def has_hr(ctx):
 def has_dis_access(ctx):
     return any(r.name in (DIS_ROLE, ADMIN_ROLE) for r in ctx.author.roles)
 
-def is_in_family(ctx):
-    if has_hr(ctx):
+def has_family_role(ctx):
+    """Доступ к семейным функциям: Deadly, Тех. Состав, или член семьи."""
+    if any(r.name == FAMILY_ACCESS_ROLE for r in ctx.author.roles):
+        return True
+    if has_admin(ctx):
         return True
     c.execute("SELECT 1 FROM family_members WHERE discord_id=?", (ctx.author.id,))
     return c.fetchone() is not None
@@ -129,6 +130,36 @@ async def on_command_error(ctx, error):
         await ctx.send(f"❌ Неверный аргумент: {error}", delete_after=10)
     else:
         await ctx.send(f"❌ Ошибка: {str(error)}", delete_after=10)
+
+@bot.command(name="backup")
+@commands.check(has_admin)
+async def backup_db(ctx):
+    if not os.path.exists(DB_PATH):
+        return await ctx.send("❌ База данных не найдена.", delete_after=10)
+    file = discord.File(DB_PATH, filename="gta_rp.db")
+    await ctx.send("📦 Бекап базы данных:", file=file)
+
+@bot.command(name="restore")
+@commands.check(has_admin)
+async def restore_db(ctx):
+    if len(ctx.message.attachments) == 0:
+        return await ctx.send("❌ Прикрепите файл gta_rp.db.", delete_after=10)
+    att = ctx.message.attachments[0]
+    if not att.filename.endswith('.db'):
+        return await ctx.send("❌ Файл должен иметь расширение .db.", delete_after=10)
+    if os.path.exists(DB_PATH):
+        os.rename(DB_PATH, DB_PATH + '.backup')
+    try:
+        await att.save(DB_PATH)
+        global conn, c
+        conn.close()
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        await ctx.send("✅ База данных восстановлена.")
+    except Exception as e:
+        await ctx.send(f"❌ Ошибка восстановления: {e}", delete_after=10)
+        if os.path.exists(DB_PATH + '.backup'):
+            os.rename(DB_PATH + '.backup', DB_PATH)
 
 @bot.command(name="id")
 async def get_id(ctx, member: discord.Member = None):
@@ -163,7 +194,7 @@ async def remove_family(ctx, discord_id: int):
     await ctx.send(f'✅ <@{discord_id}> (`{nickname}`) удалён из семьи.')
 
 @bot.command(name="семья")
-@commands.check(is_in_family)
+@commands.check(has_family_role)
 async def family_list(ctx):
     c.execute("SELECT nickname, discord_id FROM family_members")
     rows = c.fetchall()
@@ -178,7 +209,7 @@ async def family_list(ctx):
 async def add_car(ctx, model: str, plate: str):
     nick = get_member_nick(ctx.author.id)
     if not nick:
-        return await ctx.send('❌ Вы не в семье.', delete_after=10)
+        return await ctx.send('❌ Вы не привязаны к семье. Сначала добавьте себя через !добавсемья.', delete_after=10)
     nick = nick.replace("_", " ")
     try:
         c.execute("INSERT INTO vehicles (owner_nick, model, plate) VALUES (?, ?, ?)", (nick, model, plate))
@@ -198,7 +229,7 @@ async def remove_car(ctx, plate: str):
     await ctx.send(f'🗑️ Машина `{plate}` удалена.')
 
 @bot.command(name="авто")
-@commands.check(is_in_family)
+@commands.check(has_family_role)
 async def car_list(ctx):
     auto_return()
     c.execute("SELECT id, owner_nick, model, plate, status, taken_by, return_at FROM vehicles")
@@ -219,7 +250,7 @@ async def car_list(ctx):
 async def take_car(ctx, car_id: int, hours: float = 2.0):
     nick = get_member_nick(ctx.author.id)
     if not nick:
-        return await ctx.send('❌ Вы не в семье.', delete_after=10)
+        return await ctx.send('❌ Вы не привязаны к семье.', delete_after=10)
     nick = nick.replace("_", " ")
     auto_return()
     c.execute("SELECT status, plate FROM vehicles WHERE id=?", (car_id,))
@@ -251,7 +282,7 @@ async def return_car(ctx, car_id: int):
     await ctx.send(f'✅ Авто `{plate}` возвращено.')
 
 @bot.command(name="склад")
-@commands.check(is_in_family)
+@commands.check(has_family_role)
 async def warehouse_info(ctx):
     c.execute("SELECT item, amount FROM warehouse WHERE amount > 0")
     items = c.fetchall()
@@ -266,7 +297,7 @@ async def warehouse_info(ctx):
 async def take_warehouse(ctx, item: str, amount: int):
     nick = get_member_nick(ctx.author.id)
     if not nick:
-        return await ctx.send('❌ Вы не в семье.', delete_after=10)
+        return await ctx.send('❌ Вы не привязаны к семье.', delete_after=10)
     nick = nick.replace("_", " ")
     if amount <= 0:
         return await ctx.send('❌ Количество > 0.', delete_after=10)
@@ -283,7 +314,7 @@ async def take_warehouse(ctx, item: str, amount: int):
 async def put_warehouse(ctx, item: str, amount: int):
     nick = get_member_nick(ctx.author.id)
     if not nick:
-        return await ctx.send('❌ Вы не в семье.', delete_after=10)
+        return await ctx.send('❌ Вы не привязаны к семье.', delete_after=10)
     nick = nick.replace("_", " ")
     if amount <= 0:
         return await ctx.send('❌ Количество > 0.', delete_after=10)
@@ -293,19 +324,19 @@ async def put_warehouse(ctx, item: str, amount: int):
     await ctx.send(f'✅ `{nick}` положил {amount} x {item} на склад.')
 
 @bot.command(name="банк")
-@commands.check(is_in_family)
+@commands.check(has_family_role)
 async def bank_balance(ctx):
     balance = get_family_balance()
     await ctx.send(f'💰 Баланс семьи: {balance}')
 
 @bot.command(name="пополнить")
-@commands.check(is_in_family)
+@commands.check(has_family_role)
 async def bank_add(ctx, amount: int, *, reason: str = ""):
     if amount <= 0:
         return await ctx.send('❌ Сумма должна быть положительной.', delete_after=10)
     nick = get_member_nick(ctx.author.id)
     if not nick:
-        return await ctx.send('❌ Вы не привязаны к семье.', delete_after=10)
+        return await ctx.send('❌ Вы не привязаны к семье. Используйте !добавсемья.', delete_after=10)
     nick = nick.replace("_", " ")
     c.execute("UPDATE bank SET balance = balance + ?", (amount,))
     conn.commit()
@@ -323,13 +354,13 @@ async def bank_add(ctx, amount: int, *, reason: str = ""):
     await ctx.send(msg, files=files if files else None)
 
 @bot.command(name="снять")
-@commands.check(is_in_family)
+@commands.check(has_family_role)
 async def bank_remove(ctx, amount: int, *, reason: str = ""):
     if amount <= 0:
         return await ctx.send('❌ Сумма должна быть положительной.', delete_after=10)
     nick = get_member_nick(ctx.author.id)
     if not nick:
-        return await ctx.send('❌ Вы не привязаны к семье.', delete_after=10)
+        return await ctx.send('❌ Вы не привязаны к семье. Используйте !добавсемья.', delete_after=10)
     nick = nick.replace("_", " ")
     balance = get_family_balance()
     if balance < amount:
@@ -421,7 +452,7 @@ async def dv_add(ctx, nickname: str, action_type: str, *, reason: str):
     await ctx.send(f'⚠️ {mention} получил **{action_type}**.\nПричина: {reason}\nВыдал: {ctx.author.mention}', files=files if files else None)
 
 @bot.command(name="выговоры")
-@commands.check(is_in_family)
+@commands.check(has_family_role)
 async def dv_list(ctx, nickname: str = None):
     if nickname:
         nickname = nickname.replace("_", " ")
@@ -457,9 +488,10 @@ async def help_cmd(ctx):
     embed.add_field(name="👥 Семья", value="`!добавсемья ID Ник`\n`!удалсемья ID`\n`!семья`\n`!id @user`", inline=False)
     embed.add_field(name="🚗 Авто", value="`!добававто Модель Госномер`\n`!удалавто Госномер`\n`!авто`\n`!взятьавто Номер [часы]`\n`!вернутьавто Номер`", inline=False)
     embed.add_field(name="📦 Склад", value="`!склад`\n`!взятьсклад Предмет Кол-во`\n`!положитьсклад Предмет Кол-во`", inline=False)
-    embed.add_field(name="💰 Банк", value="`!банк` — баланс семьи\n`!пополнить Сумма [Причина]`\n`!снять Сумма [Причина]` — любой член семьи", inline=False)
+    embed.add_field(name="💰 Банк", value="`!банк` — баланс семьи\n`!пополнить Сумма [Причина]`\n`!снять Сумма [Причина]` — (Deadly/Тех. Состав/члены семьи)", inline=False)
     embed.add_field(name="📝 Контракты", value="`!контракт \"Название\" Участник1 Участник2 ... ДД.ММ.ГГГГ ЧЧ:ММ [векселя]`\n(отмечается <@&роль>)", inline=False)
     embed.add_field(name="⚠️ Дисциплина", value="`!дв Ник Тип Причина` (обязательно прикрепить скриншот)\n`!выговоры [ник]`\n`!снятьдв Ник Причина`", inline=False)
+    embed.add_field(name="💾 Бекап", value="`!backup` — сохранить базу данных\n`!restore` — восстановить базу из прикреплённого файла", inline=False)
     await ctx.send(embed=embed)
 
 @bot.event
