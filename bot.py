@@ -9,11 +9,14 @@ from flask import Flask
 from threading import Thread
 
 TOKEN = os.getenv("TOKEN")
-ADMIN_ROLE = "Deadly"
-HR_ROLE = "Recruiter"
-DIS_ROLE = "Dicipline"
-FAMILY_ACCESS_ROLE = "Deadly"
 PREFIX = "!"
+
+# Роли
+SUPER_ADMIN_ROLE = "Тех. Состав"   # имеет доступ ко всему
+RECRUITER_ROLE = "Recrutior"
+ASSISTANT_ROLE = "Assistant"
+DEADLY_ROLE = "Deadly"
+DISCIPLINE_ROLE = "Discipline"
 
 CONTRACT_NOTIFY_ROLE_ID = 1473705347020623943
 
@@ -69,6 +72,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS disciplinary_actions (
     date TEXT
 )''')
 
+# миграции (если таблицы были созданы раньше без этих полей)
 try:
     c.execute("ALTER TABLE family_members ADD COLUMN discord_id INTEGER")
 except:
@@ -88,23 +92,18 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 
-def has_admin(ctx):
-    return any(r.name == ADMIN_ROLE for r in ctx.author.roles)
+# Проверки ролей
+def is_recruiter(ctx):
+    return any(r.name == RECRUITER_ROLE for r in ctx.author.roles) or any(r.name == SUPER_ADMIN_ROLE for r in ctx.author.roles)
 
-def has_hr(ctx):
-    return any(r.name in (HR_ROLE, ADMIN_ROLE) for r in ctx.author.roles)
+def is_assistant(ctx):
+    return any(r.name == ASSISTANT_ROLE for r in ctx.author.roles) or any(r.name == SUPER_ADMIN_ROLE for r in ctx.author.roles)
 
-def has_dis_access(ctx):
-    return any(r.name in (DIS_ROLE, ADMIN_ROLE) for r in ctx.author.roles)
+def is_deadly(ctx):
+    return any(r.name == DEADLY_ROLE for r in ctx.author.roles) or any(r.name == SUPER_ADMIN_ROLE for r in ctx.author.roles)
 
-def has_family_role(ctx):
-    """Доступ к семейным функциям: Deadly, Тех. Состав, или член семьи."""
-    if any(r.name == FAMILY_ACCESS_ROLE for r in ctx.author.roles):
-        return True
-    if has_admin(ctx):
-        return True
-    c.execute("SELECT 1 FROM family_members WHERE discord_id=?", (ctx.author.id,))
-    return c.fetchone() is not None
+def is_discipline(ctx):
+    return any(r.name == DISCIPLINE_ROLE for r in ctx.author.roles) or any(r.name == SUPER_ADMIN_ROLE for r in ctx.author.roles)
 
 def get_member_nick(user_id):
     c.execute("SELECT nickname FROM family_members WHERE discord_id=?", (user_id,))
@@ -132,7 +131,7 @@ async def on_command_error(ctx, error):
         await ctx.send(f"❌ Ошибка: {str(error)}", delete_after=10)
 
 @bot.command(name="backup")
-@commands.check(has_admin)
+@commands.check(is_assistant)
 async def backup_db(ctx):
     if not os.path.exists(DB_PATH):
         return await ctx.send("❌ База данных не найдена.", delete_after=10)
@@ -140,7 +139,7 @@ async def backup_db(ctx):
     await ctx.send("📦 Бекап базы данных:", file=file)
 
 @bot.command(name="restore")
-@commands.check(has_admin)
+@commands.check(is_assistant)
 async def restore_db(ctx):
     if len(ctx.message.attachments) == 0:
         return await ctx.send("❌ Прикрепите файл gta_rp.db.", delete_after=10)
@@ -162,12 +161,13 @@ async def restore_db(ctx):
             os.rename(DB_PATH + '.backup', DB_PATH)
 
 @bot.command(name="id")
+@commands.check(is_recruiter)
 async def get_id(ctx, member: discord.Member = None):
     m = member or ctx.author
     await ctx.send(f'🆔 {m.mention}: `{m.id}`')
 
 @bot.command(name="добавсемья", aliases=["добавить-в-семью"])
-@commands.check(has_hr)
+@commands.check(is_recruiter)
 async def add_family(ctx, discord_id: int, *, nickname: str):
     nickname = nickname.replace("_", " ")
     c.execute("SELECT * FROM family_members WHERE discord_id=?", (discord_id,))
@@ -182,7 +182,7 @@ async def add_family(ctx, discord_id: int, *, nickname: str):
     await ctx.send(f'✅ <@{discord_id}> (`{nickname}`) добавлен в семью.')
 
 @bot.command(name="удалсемья", aliases=["удалить-из-семьи"])
-@commands.check(has_hr)
+@commands.check(is_assistant)
 async def remove_family(ctx, discord_id: int):
     c.execute("SELECT nickname FROM family_members WHERE discord_id=?", (discord_id,))
     row = c.fetchone()
@@ -194,7 +194,7 @@ async def remove_family(ctx, discord_id: int):
     await ctx.send(f'✅ <@{discord_id}> (`{nickname}`) удалён из семьи.')
 
 @bot.command(name="семья")
-@commands.check(has_family_role)
+@commands.check(is_recruiter)
 async def family_list(ctx):
     c.execute("SELECT nickname, discord_id FROM family_members")
     rows = c.fetchall()
@@ -204,8 +204,9 @@ async def family_list(ctx):
     embed = discord.Embed(title='👥 Семья', description='\n'.join(lines), color=0x00ff00)
     await ctx.send(embed=embed)
 
+# Автомобили
 @bot.command(name="добававто")
-@commands.check(has_admin)
+@commands.check(is_assistant)
 async def add_car(ctx, model: str, plate: str):
     nick = get_member_nick(ctx.author.id)
     if not nick:
@@ -220,7 +221,7 @@ async def add_car(ctx, model: str, plate: str):
         await ctx.send(f'❌ Госномер `{plate}` уже существует.', delete_after=10)
 
 @bot.command(name="удалавто")
-@commands.check(has_admin)
+@commands.check(is_assistant)
 async def remove_car(ctx, plate: str):
     c.execute("DELETE FROM vehicles WHERE plate=?", (plate,))
     if c.rowcount == 0:
@@ -229,7 +230,7 @@ async def remove_car(ctx, plate: str):
     await ctx.send(f'🗑️ Машина `{plate}` удалена.')
 
 @bot.command(name="авто")
-@commands.check(has_family_role)
+@commands.check(is_deadly)
 async def car_list(ctx):
     auto_return()
     c.execute("SELECT id, owner_nick, model, plate, status, taken_by, return_at FROM vehicles")
@@ -246,7 +247,7 @@ async def car_list(ctx):
     await ctx.send(embed=embed)
 
 @bot.command(name="взятьавто")
-@commands.check(has_admin)
+@commands.check(is_deadly)
 async def take_car(ctx, car_id: int, hours: float = 2.0):
     nick = get_member_nick(ctx.author.id)
     if not nick:
@@ -268,7 +269,7 @@ async def take_car(ctx, car_id: int, hours: float = 2.0):
     await ctx.send(f'✅ `{plate}` выдано `{nick}` на {hours} ч до {return_at.strftime("%d.%m.%Y %H:%M")}.')
 
 @bot.command(name="вернутьавто")
-@commands.check(has_admin)
+@commands.check(is_deadly)
 async def return_car(ctx, car_id: int):
     c.execute("SELECT plate, status FROM vehicles WHERE id=?", (car_id,))
     car = c.fetchone()
@@ -281,8 +282,9 @@ async def return_car(ctx, car_id: int):
     conn.commit()
     await ctx.send(f'✅ Авто `{plate}` возвращено.')
 
+# Склад
 @bot.command(name="склад")
-@commands.check(has_family_role)
+@commands.check(is_deadly)
 async def warehouse_info(ctx):
     c.execute("SELECT item, amount FROM warehouse WHERE amount > 0")
     items = c.fetchall()
@@ -293,7 +295,7 @@ async def warehouse_info(ctx):
     await ctx.send(embed=embed)
 
 @bot.command(name="взятьсклад")
-@commands.check(has_admin)
+@commands.check(is_deadly)
 async def take_warehouse(ctx, item: str, amount: int):
     nick = get_member_nick(ctx.author.id)
     if not nick:
@@ -310,7 +312,7 @@ async def take_warehouse(ctx, item: str, amount: int):
     await ctx.send(f'✅ `{nick}` забрал {amount} x {item} со склада.')
 
 @bot.command(name="положитьсклад")
-@commands.check(has_admin)
+@commands.check(is_assistant)
 async def put_warehouse(ctx, item: str, amount: int):
     nick = get_member_nick(ctx.author.id)
     if not nick:
@@ -323,14 +325,15 @@ async def put_warehouse(ctx, item: str, amount: int):
     conn.commit()
     await ctx.send(f'✅ `{nick}` положил {amount} x {item} на склад.')
 
+# Банк
 @bot.command(name="банк")
-@commands.check(has_family_role)
+@commands.check(is_assistant)
 async def bank_balance(ctx):
     balance = get_family_balance()
     await ctx.send(f'💰 Баланс семьи: {balance}')
 
 @bot.command(name="пополнить")
-@commands.check(has_family_role)
+@commands.check(is_deadly)
 async def bank_add(ctx, amount: int, *, reason: str = ""):
     if amount <= 0:
         return await ctx.send('❌ Сумма должна быть положительной.', delete_after=10)
@@ -354,7 +357,7 @@ async def bank_add(ctx, amount: int, *, reason: str = ""):
     await ctx.send(msg, files=files if files else None)
 
 @bot.command(name="снять")
-@commands.check(has_family_role)
+@commands.check(is_assistant)
 async def bank_remove(ctx, amount: int, *, reason: str = ""):
     if amount <= 0:
         return await ctx.send('❌ Сумма должна быть положительной.', delete_after=10)
@@ -380,8 +383,9 @@ async def bank_remove(ctx, amount: int, *, reason: str = ""):
     msg += f' Баланс: {new_balance}.'
     await ctx.send(msg, files=files if files else None)
 
+# Контракты
 @bot.command(name="контракт")
-@commands.check(has_admin)
+@commands.check(is_deadly)
 async def contract(ctx, title: str, *, args: str = ""):
     if not args.strip():
         return await ctx.send('ℹ️ Использование: `!контракт "Название" Участник1 Участник2 ... ДД.ММ.ГГГГ ЧЧ:ММ [векселя]`', delete_after=10)
@@ -417,8 +421,9 @@ async def contract(ctx, title: str, *, args: str = ""):
 
     await ctx.send(f'{role_mention}\n📝 Контракт "{title}" ожидает подтверждения.\nУчастники: {participants_db}\nСрок: {due_date}\nВекселей: {bills}')
 
+# Дисциплина
 @bot.command(name="дв")
-@commands.check(has_dis_access)
+@commands.check(is_discipline)
 async def dv_add(ctx, nickname: str, action_type: str, *, reason: str):
     action_type = action_type.lower()
     allowed = ["предупреждение", "выговор", "2выговора", "warn", "увал"]
@@ -452,7 +457,7 @@ async def dv_add(ctx, nickname: str, action_type: str, *, reason: str):
     await ctx.send(f'⚠️ {mention} получил **{action_type}**.\nПричина: {reason}\nВыдал: {ctx.author.mention}', files=files if files else None)
 
 @bot.command(name="выговоры")
-@commands.check(has_family_role)
+@commands.check(is_discipline)
 async def dv_list(ctx, nickname: str = None):
     if nickname:
         nickname = nickname.replace("_", " ")
@@ -469,7 +474,7 @@ async def dv_list(ctx, nickname: str = None):
     await ctx.send(embed=embed)
 
 @bot.command(name="снятьдв")
-@commands.check(has_dis_access)
+@commands.check(is_discipline)
 async def dv_remove(ctx, nickname: str, *, reason: str):
     nickname = nickname.replace("_", " ")
     c.execute("DELETE FROM disciplinary_actions WHERE id = (SELECT id FROM disciplinary_actions WHERE nickname=? ORDER BY date DESC LIMIT 1)", (nickname,))
@@ -485,13 +490,13 @@ async def dv_remove(ctx, nickname: str, *, reason: str):
 @bot.command(name="помощь", aliases=["хелп"])
 async def help_cmd(ctx):
     embed = discord.Embed(title="Помощь", color=0x00ff00)
-    embed.add_field(name="👥 Семья", value="`!добавсемья ID Ник`\n`!удалсемья ID`\n`!семья`\n`!id @user`", inline=False)
-    embed.add_field(name="🚗 Авто", value="`!добававто Модель Госномер`\n`!удалавто Госномер`\n`!авто`\n`!взятьавто Номер [часы]`\n`!вернутьавто Номер`", inline=False)
-    embed.add_field(name="📦 Склад", value="`!склад`\n`!взятьсклад Предмет Кол-во`\n`!положитьсклад Предмет Кол-во`", inline=False)
-    embed.add_field(name="💰 Банк", value="`!банк` — баланс семьи\n`!пополнить Сумма [Причина]`\n`!снять Сумма [Причина]` — (Deadly/Тех. Состав/члены семьи)", inline=False)
-    embed.add_field(name="📝 Контракты", value="`!контракт \"Название\" Участник1 Участник2 ... ДД.ММ.ГГГГ ЧЧ:ММ [векселя]`\n(отмечается <@&роль>)", inline=False)
-    embed.add_field(name="⚠️ Дисциплина", value="`!дв Ник Тип Причина` (обязательно прикрепить скриншот)\n`!выговоры [ник]`\n`!снятьдв Ник Причина`", inline=False)
-    embed.add_field(name="💾 Бекап", value="`!backup` — сохранить базу данных\n`!restore` — восстановить базу из прикреплённого файла", inline=False)
+    embed.add_field(name="👥 Семья", value="`!добавсемья ID Ник` — Recrutior\n`!удалсемья ID` — Assistant\n`!семья` — Recrutior\n`!id @user` — Recrutior", inline=False)
+    embed.add_field(name="🚗 Авто", value="`!добававто Модель Госномер` — Assistant\n`!удалавто Госномер` — Assistant\n`!авто` — Deadly\n`!взятьавто Номер [часы]` — Deadly\n`!вернутьавто Номер` — Deadly", inline=False)
+    embed.add_field(name="📦 Склад", value="`!склад` — Deadly\n`!взятьсклад Предмет Кол-во` — Deadly\n`!положитьсклад Предмет Кол-во` — Assistant", inline=False)
+    embed.add_field(name="💰 Банк", value="`!банк` — Assistant\n`!пополнить Сумма [Причина]` — Deadly\n`!снять Сумма [Причина]` — Assistant", inline=False)
+    embed.add_field(name="📝 Контракты", value="`!контракт \"Название\" Участник1 Участник2 ... ДД.ММ.ГГГГ ЧЧ:ММ [векселя]` — Deadly", inline=False)
+    embed.add_field(name="⚠️ Дисциплина", value="`!дв Ник Тип Причина` — Discipline\n`!выговоры [ник]` — Discipline\n`!снятьдв Ник Причина` — Discipline", inline=False)
+    embed.add_field(name="💾 Бекап", value="`!backup` — Assistant\n`!restore` — Assistant", inline=False)
     await ctx.send(embed=embed)
 
 @bot.event
