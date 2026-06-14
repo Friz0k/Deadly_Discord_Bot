@@ -11,8 +11,7 @@ from threading import Thread
 TOKEN = os.getenv("TOKEN")
 PREFIX = "!"
 
-# Роли
-SUPER_ADMIN_ROLE = "Тех. Состав"   # имеет доступ ко всему
+SUPER_ADMIN_ROLE = "Тех. Состав"
 RECRUITER_ROLE = "Recrutior"
 ASSISTANT_ROLE = "Assistant"
 DEADLY_ROLE = "Deadly"
@@ -72,7 +71,6 @@ c.execute('''CREATE TABLE IF NOT EXISTS disciplinary_actions (
     date TEXT
 )''')
 
-# миграции (если таблицы были созданы раньше без этих полей)
 try:
     c.execute("ALTER TABLE family_members ADD COLUMN discord_id INTEGER")
 except:
@@ -92,7 +90,6 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 
-# Проверки ролей
 def is_recruiter(ctx):
     return any(r.name == RECRUITER_ROLE for r in ctx.author.roles) or any(r.name == SUPER_ADMIN_ROLE for r in ctx.author.roles)
 
@@ -204,7 +201,6 @@ async def family_list(ctx):
     embed = discord.Embed(title='👥 Семья', description='\n'.join(lines), color=0x00ff00)
     await ctx.send(embed=embed)
 
-# Автомобили
 @bot.command(name="добававто")
 @commands.check(is_assistant)
 async def add_car(ctx, model: str, plate: str):
@@ -282,7 +278,6 @@ async def return_car(ctx, car_id: int):
     conn.commit()
     await ctx.send(f'✅ Авто `{plate}` возвращено.')
 
-# Склад
 @bot.command(name="склад")
 @commands.check(is_deadly)
 async def warehouse_info(ctx):
@@ -325,7 +320,6 @@ async def put_warehouse(ctx, item: str, amount: int):
     conn.commit()
     await ctx.send(f'✅ `{nick}` положил {amount} x {item} на склад.')
 
-# Банк
 @bot.command(name="банк")
 @commands.check(is_assistant)
 async def bank_balance(ctx):
@@ -383,7 +377,6 @@ async def bank_remove(ctx, amount: int, *, reason: str = ""):
     msg += f' Баланс: {new_balance}.'
     await ctx.send(msg, files=files if files else None)
 
-# Контракты
 @bot.command(name="контракт")
 @commands.check(is_deadly)
 async def contract(ctx, title: str, *, args: str = ""):
@@ -421,7 +414,6 @@ async def contract(ctx, title: str, *, args: str = ""):
 
     await ctx.send(f'{role_mention}\n📝 Контракт "{title}" ожидает подтверждения.\nУчастники: {participants_db}\nСрок: {due_date}\nВекселей: {bills}')
 
-# Дисциплина
 @bot.command(name="дв")
 @commands.check(is_discipline)
 async def dv_add(ctx, nickname: str, action_type: str, *, reason: str):
@@ -490,13 +482,13 @@ async def dv_remove(ctx, nickname: str, *, reason: str):
 @bot.command(name="помощь", aliases=["хелп"])
 async def help_cmd(ctx):
     embed = discord.Embed(title="Помощь", color=0x00ff00)
-    embed.add_field(name="👥 Семья", value="`!добавсемья ID Ник` — Recrutior\n`!удалсемья ID` — Assistant\n`!семья` — Recrutior\n`!id @user` — Recrutior", inline=False)
-    embed.add_field(name="🚗 Авто", value="`!добававто Модель Госномер` — Assistant\n`!удалавто Госномер` — Assistant\n`!авто` — Deadly\n`!взятьавто Номер [часы]` — Deadly\n`!вернутьавто Номер` — Deadly", inline=False)
-    embed.add_field(name="📦 Склад", value="`!склад` — Deadly\n`!взятьсклад Предмет Кол-во` — Deadly\n`!положитьсклад Предмет Кол-во` — Assistant", inline=False)
-    embed.add_field(name="💰 Банк", value="`!банк` — Assistant\n`!пополнить Сумма [Причина]` — Deadly\n`!снять Сумма [Причина]` — Assistant", inline=False)
-    embed.add_field(name="📝 Контракты", value="`!контракт \"Название\" Участник1 Участник2 ... ДД.ММ.ГГГГ ЧЧ:ММ [векселя]` — Deadly", inline=False)
-    embed.add_field(name="⚠️ Дисциплина", value="`!дв Ник Тип Причина` — Discipline\n`!выговоры [ник]` — Discipline\n`!снятьдв Ник Причина` — Discipline", inline=False)
-    embed.add_field(name="💾 Бекап", value="`!backup` — Assistant\n`!restore` — Assistant", inline=False)
+    embed.add_field(name="👥 Семья", value="`!добавсемья ID Ник`\n`!удалсемья ID`\n`!семья`\n`!id @user`", inline=False)
+    embed.add_field(name="🚗 Авто", value="`!добававто Модель Госномер`\n`!удалавто Госномер`\n`!авто`\n`!взятьавто Номер [часы]`\n`!вернутьавто Номер`", inline=False)
+    embed.add_field(name="📦 Склад", value="`!склад`\n`!взятьсклад Предмет Кол-во`\n`!положитьсклад Предмет Кол-во`", inline=False)
+    embed.add_field(name="💰 Банк", value="`!банк`\n`!пополнить Сумма [Причина]`\n`!снять Сумма [Причина]`", inline=False)
+    embed.add_field(name="📝 Контракты", value="`!контракт \"Название\" Участник1 Участник2 ... ДД.ММ.ГГГГ ЧЧ:ММ [векселя]`", inline=False)
+    embed.add_field(name="⚠️ Дисциплина", value="`!дв Ник Тип Причина`\n`!выговоры [ник]`\n`!снятьдв Ник Причина`", inline=False)
+    embed.add_field(name="💾 Бекап", value="`!backup`\n`!restore`", inline=False)
     await ctx.send(embed=embed)
 
 @bot.event
