@@ -12,7 +12,7 @@ TOKEN = os.getenv("TOKEN")
 PREFIX = "!"
 
 SUPER_ADMIN_ROLE = "Тех. Состав"
-RECRUITER_ROLE = "Recrutior"
+RECRUITER_ROLE = "Recruiter"          # исправлено
 ASSISTANT_ROLE = "Assistant"
 DEADLY_ROLE = "Deadly"
 DISCIPLINE_ROLE = "Discipline"
