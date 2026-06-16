@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import sqlite3
 import datetime
 import io
@@ -12,12 +12,20 @@ TOKEN = os.getenv("TOKEN")
 PREFIX = "!"
 
 SUPER_ADMIN_ROLE = "Тех. Состав"
-RECRUITER_ROLE = "Recruiter"          # исправлено
+RECRUITER_ROLE = "Recruiter"
 ASSISTANT_ROLE = "Assistant"
 DEADLY_ROLE = "Deadly"
 DISCIPLINE_ROLE = "Discipline"
 
-CONTRACT_NOTIFY_ROLE_ID = 1473705347020623943
+CONTRACT_NOTIFY_ROLE_ID = 1516422622122999888
+
+ROLE_PRED = 1473709199488975020
+ROLE_1VYG = 1473709489780953260
+ROLE_2VYG = 1473709343126847549
+ROLE_WARN = 1516422427327074404
+ROLE_FAMILY_AUTO = 1475823094869393591
+
+DISC_ROLES = [ROLE_PRED, ROLE_1VYG, ROLE_2VYG, ROLE_WARN]
 
 DB_PATH = 'gta_rp.db'
 
@@ -88,6 +96,7 @@ conn.commit()
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 
 def is_recruiter(ctx):
@@ -115,6 +124,101 @@ def auto_return():
     now = datetime.datetime.now().isoformat()
     c.execute("UPDATE vehicles SET status='свободен', taken_by=NULL, taken_at=NULL, return_at=NULL WHERE status='занят' AND return_at <= ?", (now,))
     conn.commit()
+
+def get_discipline_counts(nickname):
+    c.execute("SELECT COUNT(*) FROM disciplinary_actions WHERE nickname=? AND action_type='предупреждение'", (nickname,))
+    warnings = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM disciplinary_actions WHERE nickname=? AND action_type='выговор'", (nickname,))
+    vygs = c.fetchone()[0]
+    return warnings, vygs
+
+async def update_discipline_roles(member, nickname):
+    for role_id in DISC_ROLES:
+        role = member.guild.get_role(role_id)
+        if role and role in member.roles:
+            try:
+                await member.remove_roles(role, reason="Пересчёт наказаний")
+            except:
+                pass
+
+    warns, vygs = get_discipline_counts(nickname)
+    new_vygs = vygs + warns // 2
+    remaining_warns = warns % 2
+
+    if warns >= 2:
+        c.execute("DELETE FROM disciplinary_actions WHERE nickname=? AND action_type='предупреждение'", (nickname,))
+        for _ in range(warns // 2):
+            c.execute("INSERT INTO disciplinary_actions (nickname, discord_id, action_type, reason, issued_by, date) VALUES (?,?,?,?,?,?)",
+                      (nickname, member.id, "выговор", "Автоконвертация 2 предупреждений", "Система", datetime.datetime.now().isoformat()))
+        conn.commit()
+        new_vygs = vygs + warns // 2
+        remaining_warns = 0
+
+    if remaining_warns == 1:
+        role = member.guild.get_role(ROLE_PRED)
+        if role:
+            try:
+                await member.add_roles(role, reason="Предупреждение")
+            except:
+                pass
+
+    if new_vygs >= 3:
+        role = member.guild.get_role(ROLE_WARN)
+    elif new_vygs == 2:
+        role = member.guild.get_role(ROLE_2VYG)
+    elif new_vygs == 1:
+        role = member.guild.get_role(ROLE_1VYG)
+    else:
+        role = None
+    if role:
+        try:
+            await member.add_roles(role, reason=f"Выговоры: {new_vygs}")
+        except:
+            pass
+
+@bot.event
+async def on_member_update(before, after):
+    role = after.guild.get_role(ROLE_FAMILY_AUTO)
+    if not role:
+        return
+    had_role = role in before.roles
+    has_role = role in after.roles
+
+    if not had_role and has_role:
+        c.execute("SELECT 1 FROM family_members WHERE discord_id=?", (after.id,))
+        if c.fetchone() is None:
+            nick = after.display_name.replace(" ", "_")
+            try:
+                c.execute("INSERT INTO family_members (nickname, discord_id, joined_at) VALUES (?, ?, ?)",
+                          (nick, after.id, datetime.datetime.now().isoformat()))
+                conn.commit()
+            except:
+                pass
+    elif had_role and not has_role:
+        c.execute("DELETE FROM family_members WHERE discord_id=?", (after.id,))
+        if c.rowcount > 0:
+            conn.commit()
+
+@tasks.loop(minutes=10)
+async def update_all_nicknames():
+    """Каждые 10 минут обновляет ники всех членов семьи по серверному display_name."""
+    c.execute("SELECT discord_id, nickname FROM family_members")
+    rows = c.fetchall()
+    guild = bot.guilds[0] if bot.guilds else None
+    if not guild:
+        return
+    for disc_id, old_nick in rows:
+        member = guild.get_member(disc_id)
+        if member:
+            new_nick = member.display_name.replace(" ", "_")
+            if new_nick != old_nick:
+                c.execute("UPDATE family_members SET nickname=? WHERE discord_id=?", (new_nick, disc_id))
+                conn.commit()
+
+@bot.event
+async def on_ready():
+    print(f"Бот {bot.user} готов!")
+    update_all_nicknames.start()
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -151,6 +255,7 @@ async def restore_db(ctx):
         conn.close()
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
+        update_all_nicknames.restart()
         await ctx.send("✅ База данных восстановлена.")
     except Exception as e:
         await ctx.send(f"❌ Ошибка восстановления: {e}", delete_after=10)
@@ -351,7 +456,7 @@ async def bank_add(ctx, amount: int, *, reason: str = ""):
     await ctx.send(msg, files=files if files else None)
 
 @bot.command(name="снять")
-@commands.check(is_assistant)
+@commands.check(is_deadly)
 async def bank_remove(ctx, amount: int, *, reason: str = ""):
     if amount <= 0:
         return await ctx.send('❌ Сумма должна быть положительной.', delete_after=10)
@@ -445,6 +550,11 @@ async def dv_add(ctx, nickname: str, action_type: str, *, reason: str):
     c.execute("INSERT INTO disciplinary_actions (nickname, discord_id, action_type, reason, issued_by, date) VALUES (?,?,?,?,?,?)",
               (nickname, discord_id, action_type, reason, str(ctx.author), datetime.datetime.now().isoformat()))
     conn.commit()
+
+    if discord_id:
+        member = ctx.guild.get_member(discord_id)
+        if member:
+            await update_discipline_roles(member, nickname)
     mention = f'<@{discord_id}>' if discord_id else nickname
     await ctx.send(f'⚠️ {mention} получил **{action_type}**.\nПричина: {reason}\nВыдал: {ctx.author.mention}', files=files if files else None)
 
@@ -476,6 +586,10 @@ async def dv_remove(ctx, nickname: str, *, reason: str):
     c.execute("SELECT discord_id FROM family_members WHERE nickname=?", (nickname,))
     row = c.fetchone()
     disc_id = row[0] if row else None
+    if disc_id:
+        member = ctx.guild.get_member(disc_id)
+        if member:
+            await update_discipline_roles(member, nickname)
     mention = f'<@{disc_id}>' if disc_id else nickname
     await ctx.send(f'✅ Снят последний выговор с {mention}.\nПричина: {reason}')
 
