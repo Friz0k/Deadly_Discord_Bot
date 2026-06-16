@@ -32,7 +32,6 @@ DB_PATH = 'gta_rp.db'
 conn = sqlite3.connect(DB_PATH)
 c = conn.cursor()
 
-# Создание таблиц
 c.execute('''CREATE TABLE IF NOT EXISTS family_members (
     nickname TEXT PRIMARY KEY,
     discord_id INTEGER UNIQUE,
@@ -90,7 +89,6 @@ c.execute('''CREATE TABLE IF NOT EXISTS logs (
     timestamp TEXT
 )''')
 
-# миграции (на случай старых баз)
 try:
     c.execute("ALTER TABLE family_members ADD COLUMN discord_id INTEGER")
 except:
@@ -103,10 +101,11 @@ try:
     c.execute("ALTER TABLE contracts ADD COLUMN bills INTEGER DEFAULT 0")
 except:
     pass
-try:
+
+c.execute("PRAGMA table_info(warehouse)")
+columns = [col[1] for col in c.fetchall()]
+if 'category' not in columns:
     c.execute("ALTER TABLE warehouse ADD COLUMN category TEXT DEFAULT 'Проче'")
-except:
-    pass
 
 conn.commit()
 
@@ -115,7 +114,6 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 
-# ---------- Проверки ролей ----------
 def is_recruiter(ctx):
     return any(r.name == RECRUITER_ROLE for r in ctx.author.roles) or any(r.name == SUPER_ADMIN_ROLE for r in ctx.author.roles)
 
@@ -128,7 +126,6 @@ def is_deadly(ctx):
 def is_discipline(ctx):
     return any(r.name == DISCIPLINE_ROLE for r in ctx.author.roles) or any(r.name == SUPER_ADMIN_ROLE for r in ctx.author.roles)
 
-# ---------- Вспомогательные функции ----------
 def get_member_nick(user_id):
     c.execute("SELECT nickname FROM family_members WHERE discord_id=?", (user_id,))
     row = c.fetchone()
@@ -199,7 +196,6 @@ async def update_discipline_roles(member, nickname):
         except:
             pass
 
-# ---------- Авто-добавление в семью по роли ----------
 @bot.event
 async def on_member_update(before, after):
     role = after.guild.get_role(ROLE_FAMILY_AUTO)
@@ -225,7 +221,6 @@ async def on_member_update(before, after):
             conn.commit()
             log_action(after.id, after.display_name, "Авто-удаление из семьи", f"Роль {role.name} снята")
 
-# ---------- Обновление ников каждые 10 минут ----------
 @tasks.loop(minutes=10)
 async def update_all_nicknames():
     c.execute("SELECT discord_id, nickname FROM family_members")
@@ -241,7 +236,6 @@ async def update_all_nicknames():
                 c.execute("UPDATE family_members SET nickname=? WHERE discord_id=?", (new_nick, disc_id))
                 conn.commit()
 
-# ---------- Авто-снятие ДВ раз в час ----------
 @tasks.loop(hours=1)
 async def auto_remove_expired_discipline():
     cutoff = (datetime.datetime.now() - datetime.timedelta(days=14)).isoformat()
@@ -262,7 +256,6 @@ async def on_ready():
     update_all_nicknames.start()
     auto_remove_expired_discipline.start()
 
-# ---------- Обработчик ошибок ----------
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
@@ -274,7 +267,6 @@ async def on_command_error(ctx, error):
     else:
         await ctx.send(f"❌ Ошибка: {str(error)}", delete_after=10)
 
-# ---------- Бекап и восстановление ----------
 @bot.command(name="backup")
 @commands.check(is_assistant)
 async def backup_db(ctx):
@@ -307,14 +299,12 @@ async def restore_db(ctx):
         if os.path.exists(DB_PATH + '.backup'):
             os.rename(DB_PATH + '.backup', DB_PATH)
 
-# ---------- ID ----------
 @bot.command(name="id")
 @commands.check(is_recruiter)
 async def get_id(ctx, member: discord.Member = None):
     m = member or ctx.author
     await ctx.send(f'🆔 {m.mention}: `{m.id}`')
 
-# ---------- Семья ----------
 @bot.command(name="добавсемья", aliases=["добавить-в-семью"])
 @commands.check(is_recruiter)
 async def add_family(ctx, discord_id: int, *, nickname: str):
@@ -355,7 +345,6 @@ async def family_list(ctx):
     embed = discord.Embed(title='👥 Семья', description='\n'.join(lines), color=0x00ff00)
     await ctx.send(embed=embed)
 
-# ---------- Автомобили ----------
 @bot.command(name="добававто")
 @commands.check(is_assistant)
 async def add_car(ctx, model: str, plate: str):
@@ -437,7 +426,6 @@ async def return_car(ctx, car_id: int):
     log_action(ctx.author.id, get_member_nick(ctx.author.id) or str(ctx.author), "Вернуть авто", f"Номер {car_id}")
     await ctx.send(f'✅ Авто `{plate}` возвращено.')
 
-# ---------- Склад с категориями ----------
 @bot.command(name="сп")
 @commands.check(is_assistant)
 async def warehouse_put(ctx, item: str, category: str, amount: int):
@@ -501,7 +489,6 @@ async def warehouse_take(ctx, item: str, amount: int):
     log_action(ctx.author.id, nick, "Взять со склада", f"{item} -{amount}")
     await ctx.send(f'✅ `{nick}` забрал {amount} x **{item}** со склада.')
 
-# ---------- Банк ----------
 @bot.command(name="банк")
 @commands.check(is_assistant)
 async def bank_balance(ctx):
@@ -561,7 +548,6 @@ async def bank_remove(ctx, amount: int, *, reason: str = ""):
     msg += f' Баланс: {new_balance}.'
     await ctx.send(msg, files=files if files else None)
 
-# ---------- Контракты ----------
 @bot.command(name="контракт")
 @commands.check(is_deadly)
 async def contract(ctx, title: str, *, args: str = ""):
@@ -600,7 +586,6 @@ async def contract(ctx, title: str, *, args: str = ""):
 
     await ctx.send(f'{role_mention}\n📝 Контракт "{title}" ожидает подтверждения.\nУчастники: {participants_db}\nСрок: {due_date}\nВекселей: {bills}')
 
-# ---------- Дисциплина (через @тег) ----------
 @bot.command(name="дв")
 @commands.check(is_discipline)
 async def dv_add(ctx, member: discord.Member, action_type: str, *, reason: str):
@@ -671,36 +656,52 @@ async def dv_list(ctx, member: discord.Member = None):
     embed = discord.Embed(title=f'📋 Выговоры: {nickname}', description='\n'.join(lines), color=0xff0000)
     await ctx.send(embed=embed)
 
-# ---------- Логи ----------
 @bot.command(name="logs")
 @commands.check(is_assistant)
 async def show_logs(ctx, member: discord.Member = None):
-    if member:
-        c.execute("SELECT nickname, action, details, timestamp FROM logs WHERE discord_id=? ORDER BY id DESC LIMIT 10", (member.id,))
-    else:
-        c.execute("SELECT nickname, action, details, timestamp FROM logs ORDER BY id DESC LIMIT 10")
-    rows = c.fetchall()
+    try:
+        c.execute('''CREATE TABLE IF NOT EXISTS logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            discord_id INTEGER,
+            nickname TEXT,
+            action TEXT,
+            details TEXT,
+            timestamp TEXT
+        )''')
+        conn.commit()
+    except:
+        pass
+
+    try:
+        if member:
+            c.execute("SELECT nickname, action, details, timestamp FROM logs WHERE discord_id=? ORDER BY id DESC LIMIT 10", (member.id,))
+        else:
+            c.execute("SELECT nickname, action, details, timestamp FROM logs ORDER BY id DESC LIMIT 10")
+        rows = c.fetchall()
+    except sqlite3.OperationalError as e:
+        await ctx.send(f"❌ Ошибка базы данных. Попробуйте перезапустить бота.\n{str(e)}", delete_after=10)
+        return
+
     if not rows:
         return await ctx.send("📋 Логов нет.", delete_after=10)
+
     lines = [f'**{nick}** – {action}\n{details} | {ts}' for nick, action, details, ts in rows]
     embed = discord.Embed(title="📋 Логи", description='\n'.join(lines), color=0x3498db)
     await ctx.send(embed=embed)
 
-# ---------- Помощь ----------
 @bot.command(name="помощь", aliases=["хелп"])
 async def help_cmd(ctx):
-    embed = discord.Embed(title="Помощь", color=0x00ff00)
-    embed.add_field(name="👥 Семья", value="`!добавсемья ID Ник`\n`!удалсемья ID`\n`!семья`\n`!id @user`", inline=False)
-    embed.add_field(name="🚗 Авто", value="`!добававто Модель Госномер`\n`!удалавто Госномер`\n`!авто`\n`!взятьавто Номер [часы]`\n`!вернутьавто Номер`", inline=False)
-    embed.add_field(name="📦 Склад", value="`!сп Название Категория Кол-во`\n`!склад [Категория]`\n`!взятьсклад Предмет Кол-во`", inline=False)
-    embed.add_field(name="💰 Банк", value="`!банк`\n`!пополнить Сумма [Причина]`\n`!снять Сумма [Причина]`", inline=False)
+    embed = discord.Embed(title="✨ Помощь по боту", color=0x9b59b6)
+    embed.add_field(name="👥 Семья", value="`!добавсемья ID Ник` — добавить\n`!удалсемья ID` — удалить\n`!семья` — список\n`!id @user` — узнать ID", inline=False)
+    embed.add_field(name="🚗 Авто", value="`!добававто Модель Госномер`\n`!удалавто Госномер`\n`!авто` — список\n`!взятьавто Номер [часы]`\n`!вернутьавто Номер`", inline=False)
+    embed.add_field(name="📦 Склад", value="`!склад` — всё содержимое\n`!склад Оружие` — фильтр по категории\n`!сп Предмет Категория Кол-во` — положить\n`!взятьсклад Предмет Кол-во`", inline=False)
+    embed.add_field(name="💰 Банк", value="`!банк` — баланс\n`!пополнить Сумма [Причина]`\n`!снять Сумма [Причина]`", inline=False)
     embed.add_field(name="📝 Контракты", value="`!контракт \"Название\" Участник1 Участник2 ... ДД.ММ.ГГГГ ЧЧ:ММ [векселя]`", inline=False)
-    embed.add_field(name="⚠️ Дисциплина", value="`!дв @Участник Тип Причина`\n`!выговоры [@Участник]`\n`!снятьдв @Участник Причина`", inline=False)
-    embed.add_field(name="📋 Логи", value="`!logs [@Участник]`", inline=False)
-    embed.add_field(name="💾 Бекап", value="`!backup`\n`!restore`", inline=False)
+    embed.add_field(name="⚠️ Дисциплина", value="`!дв @Участник Тип Причина` — выдать\n`!выговоры [@Участник]` — список\n`!снятьдв @Участник Причина` — снять", inline=False)
+    embed.add_field(name="📋 Логи", value="`!logs [@Участник]` — история действий", inline=False)
+    embed.add_field(name="💾 Бекап", value="`!backup` — сохранить базу\n`!restore` — восстановить из файла", inline=False)
     await ctx.send(embed=embed)
 
-# ---------- Автоудаление команд ----------
 @bot.event
 async def on_command_completion(ctx):
     try:
@@ -708,7 +709,6 @@ async def on_command_completion(ctx):
     except:
         pass
 
-# ---------- Веб-сервер для Render ----------
 app = Flask(__name__)
 
 @app.route('/')
