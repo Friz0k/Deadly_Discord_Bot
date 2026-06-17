@@ -93,6 +93,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS logs (
     timestamp TEXT
 )''')
 
+# миграции
 try:
     c.execute("ALTER TABLE family_members ADD COLUMN discord_id INTEGER")
 except:
@@ -159,6 +160,15 @@ def auto_return():
     conn.commit()
 
 def log_action(discord_id, nickname, action, details=""):
+    c.execute('''CREATE TABLE IF NOT EXISTS logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        discord_id INTEGER,
+        nickname TEXT,
+        action TEXT,
+        details TEXT,
+        timestamp TEXT
+    )''')
+    conn.commit()
     c.execute("INSERT INTO logs (discord_id, nickname, action, details, timestamp) VALUES (?,?,?,?,?)",
               (discord_id, nickname, action, details, datetime.datetime.now().isoformat()))
     conn.commit()
@@ -687,21 +697,14 @@ async def take_contract_new(ctx, members: commands.Greedy[discord.Member] = None
 
 @bot.command(name="дв")
 @commands.check(is_discipline)
-async def dv_add(ctx, member: discord.Member, action_type: str, *, reason: str):
+async def dv_add(ctx, members: commands.Greedy[discord.Member] = None, action_type: str = None, *, reason: str = None):
+    if not members or not action_type or not reason:
+        return await ctx.send("❌ Использование: `!дв @user1 @user2 ... Тип Причина`", delete_after=10)
+
     action_type = action_type.lower()
     allowed = ["предупреждение", "выговор", "2выговора", "warn", "увал"]
     if action_type not in allowed:
         return await ctx.send(f'❌ Неверный тип. Допустимые: {", ".join(allowed)}', delete_after=10)
-
-    nickname = member.display_name.replace(" ", "_")
-
-    has_image = False
-    for att in ctx.message.attachments:
-        if att.content_type and att.content_type.startswith("image/"):
-            has_image = True
-            break
-    if not has_image:
-        return await ctx.send('❌ Необходимо прикрепить скриншот.', delete_after=10)
 
     files = []
     for att in ctx.message.attachments:
@@ -710,16 +713,18 @@ async def dv_add(ctx, member: discord.Member, action_type: str, *, reason: str):
             new_name = att.filename.replace("_", "-")
             files.append(discord.File(fp=io.BytesIO(img_bytes), filename=new_name))
 
-    c.execute("INSERT INTO disciplinary_actions (nickname, discord_id, action_type, reason, issued_by, date) VALUES (?,?,?,?,?,?)",
-              (nickname, member.id, action_type, reason, str(ctx.author), datetime.datetime.now().isoformat()))
-    conn.commit()
+    issuer_nick = get_member_nick(ctx.author.id) or str(ctx.author)
 
-    await update_discipline_roles(member, nickname)
+    for member in members:
+        nickname = member.display_name.replace(" ", "_")
+        c.execute("INSERT INTO disciplinary_actions (nickname, discord_id, action_type, reason, issued_by, date) VALUES (?,?,?,?,?,?)",
+                  (nickname, member.id, action_type, reason, str(ctx.author), datetime.datetime.now().isoformat()))
+        conn.commit()
+        await update_discipline_roles(member, nickname)
+        log_action(ctx.author.id, issuer_nick, "Выдача ДВ", f"{nickname}: {action_type}, причина: {reason}")
 
-    log_action(ctx.author.id, get_member_nick(ctx.author.id) or str(ctx.author), "Выдача ДВ",
-               f"{nickname}: {action_type}, причина: {reason}")
-
-    await ctx.send(f'⚠️ {member.mention} получил **{action_type}**.\nПричина: {reason}\nВыдал: {ctx.author.mention}', files=files if files else None)
+    mentions = ', '.join(m.mention for m in members)
+    await ctx.send(f'⚠️ {mentions} получили **{action_type}**.\nПричина: {reason}\nВыдал: {ctx.author.mention}', files=files if files else None)
 
 @bot.command(name="выг", aliases=["выговоры"])
 @commands.check(is_discipline)
@@ -758,18 +763,15 @@ async def dv_remove(ctx, member: discord.Member, *, reason: str):
 @bot.command(name="logs")
 @commands.check(is_assistant)
 async def show_logs(ctx, member: discord.Member = None):
-    try:
-        c.execute('''CREATE TABLE IF NOT EXISTS logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            discord_id INTEGER,
-            nickname TEXT,
-            action TEXT,
-            details TEXT,
-            timestamp TEXT
-        )''')
-        conn.commit()
-    except:
-        pass
+    c.execute('''CREATE TABLE IF NOT EXISTS logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        discord_id INTEGER,
+        nickname TEXT,
+        action TEXT,
+        details TEXT,
+        timestamp TEXT
+    )''')
+    conn.commit()
 
     try:
         if member:
@@ -796,7 +798,7 @@ async def help_cmd(ctx):
     embed.add_field(name="📦 Склад", value="`!склад` — всё содержимое\n`!склад Оружие` — фильтр по категории\n`!псклад Предмет Категория Кол-во`\n`!всклад Предмет Кол-во`", inline=False)
     embed.add_field(name="💰 Банк", value="`!банк` — баланс\n`!пополнить Сумма [Причина]`\n`!снять Сумма [Причина]`", inline=False)
     embed.add_field(name="📝 Контракты", value="`!вк @участники Название ДД.ММ.ГГГГ ЧЧ:ММ [векселя]`", inline=False)
-    embed.add_field(name="⚠️ Дисциплина", value="`!дв @Участник Тип Причина`\n`!выг [@Участник]` — список\n`!снятьдв @Участник Причина`", inline=False)
+    embed.add_field(name="⚠️ Дисциплина", value="`!дв @Участники Тип Причина`\n`!выг [@Участник]` — список\n`!снятьдв @Участник Причина`", inline=False)
     embed.add_field(name="📋 Логи", value="`!logs [@Участник]`", inline=False)
     embed.add_field(name="💾 Бекап", value="`!backup`\n`!restore`", inline=False)
     await ctx.send(embed=embed)
