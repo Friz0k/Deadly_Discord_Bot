@@ -33,7 +33,6 @@ DB_PATH = 'gta_rp.db'
 conn = sqlite3.connect(DB_PATH)
 c = conn.cursor()
 
-# Создание таблиц
 c.execute('''CREATE TABLE IF NOT EXISTS family_members (
     nickname TEXT PRIMARY KEY,
     discord_id INTEGER UNIQUE,
@@ -81,37 +80,31 @@ c.execute('''CREATE TABLE IF NOT EXISTS logs (
     timestamp TEXT
 )''')
 
-# --- Принудительная проверка схемы contracts ---
+# --- Принудительная проверка схемы contracts при старте ---
 def fix_contracts_schema():
-    """Проверяет наличие всех нужных столбцов в contracts, если нет – пересоздаёт таблицу."""
-    required_columns = {
-        'id': 'INTEGER PRIMARY KEY AUTOINCREMENT',
-        'title': 'TEXT',
-        'participants': 'TEXT',
-        'due_date': 'TEXT',
-        'bills': 'INTEGER DEFAULT 0',
-        'created_by': 'TEXT',
-        'created_at': 'TEXT',
-        'status': "TEXT DEFAULT 'создан'",
-        'message_id': 'INTEGER',
-        'notified_hours': 'INTEGER DEFAULT 0'
-    }
-    # Получаем реальные столбцы
+    required = ['id', 'title', 'participants', 'due_date', 'bills', 'created_by', 'created_at', 'status', 'message_id', 'notified_hours']
     c.execute("PRAGMA table_info(contracts)")
-    existing_columns = [col[1] for col in c.fetchall()]
-
-    if not set(required_columns.keys()).issubset(set(existing_columns)):
-        # Сохраняем старые данные (если нужно, но сейчас просто удалим)
+    existing = [col[1] for col in c.fetchall()]
+    if not all(col in existing for col in required):
         c.execute("DROP TABLE IF EXISTS contracts")
-        # Создаём заново с правильной структурой
-        columns_def = ', '.join(f'{name} {dtype}' for name, dtype in required_columns.items())
-        c.execute(f'CREATE TABLE contracts ({columns_def})')
+        c.execute('''CREATE TABLE contracts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            participants TEXT,
+            due_date TEXT,
+            bills INTEGER DEFAULT 0,
+            created_by TEXT,
+            created_at TEXT,
+            status TEXT DEFAULT 'создан',
+            message_id INTEGER,
+            notified_hours INTEGER DEFAULT 0
+        )''')
         conn.commit()
-        print("Таблица contracts была пересоздана с правильной схемой.")
+        print("⚠️ Таблица contracts пересоздана.")
 
 fix_contracts_schema()
 
-# Миграции для остальных таблиц
+# Миграции
 def add_column_if_not_exists(table, column, type_def):
     c.execute(f"PRAGMA table_info({table})")
     if column not in [col[1] for col in c.fetchall()]:
@@ -337,13 +330,37 @@ async def on_ready():
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
-        await ctx.send("❌ Недостаточно прав.", delete_after=10)
+        await ctx.send("❌ У вас нет прав для этой команды.", delete_after=10)
     elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(f"❌ Пропущен аргумент. Используйте `!помощь`.", delete_after=10)
+        await ctx.send(f"❌ Пропущен обязательный аргумент. Используйте `!помощь` для справки.", delete_after=10)
     elif isinstance(error, commands.BadArgument):
-        await ctx.send(f"❌ Неверный аргумент: {error}", delete_after=10)
+        await ctx.send(f"❌ Неправильный аргумент. Проверьте формат.", delete_after=10)
     else:
-        await ctx.send(f"❌ Ошибка: {str(error)}", delete_after=10)
+        err_str = str(error)
+        if "no such column: status" in err_str:
+            await ctx.send("❌ Таблица контрактов устарела. Введите `!reset_contracts` для исправления.", delete_after=20)
+        else:
+            await ctx.send(f"❌ Ошибка: {err_str}", delete_after=15)
+
+# --- КОМАНДА ИСПРАВЛЕНИЯ ---
+@bot.command(name="reset_contracts")
+@commands.check(is_assistant)
+async def reset_contracts(ctx):
+    c.execute("DROP TABLE IF EXISTS contracts")
+    c.execute('''CREATE TABLE contracts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        participants TEXT,
+        due_date TEXT,
+        bills INTEGER DEFAULT 0,
+        created_by TEXT,
+        created_at TEXT,
+        status TEXT DEFAULT 'создан',
+        message_id INTEGER,
+        notified_hours INTEGER DEFAULT 0
+    )''')
+    conn.commit()
+    await ctx.send("✅ Таблица контрактов исправлена. Можете пользоваться `!вк`.")
 
 @bot.command(name="backup")
 @commands.check(is_assistant)
@@ -771,7 +788,7 @@ async def help_cmd(ctx):
     embed.add_field(name="🚗 Авто", value="`!давто Модель Госномер`\n`!уавто Госномер`\n`!авто` — список\n`!взавто Номер [часы]`\n`!веавто Номер`", inline=False)
     embed.add_field(name="📦 Склад", value="`!склад` — всё содержимое\n`!склад Оружие` — фильтр по категории\n`!псклад Предмет Категория Кол-во`\n`!всклад Предмет Кол-во`", inline=False)
     embed.add_field(name="💰 Банк", value="`!банк` — баланс\n`!пополнить Сумма [Причина]`\n`!снять Сумма [Причина]`", inline=False)
-    embed.add_field(name="📝 Контракты", value="`!вк @участники Название ДД.ММ.ГГГГ ЧЧ:ММ [векселя]`", inline=False)
+    embed.add_field(name="📝 Контракты", value="`!вк @участники Название ДД.ММ.ГГГГ ЧЧ:ММ [векселя]`\nЕсли ошибка – используйте `!reset_contracts`", inline=False)
     embed.add_field(name="⚠️ Дисциплина", value="`!дв @Участники Тип Причина`\n`!выг [@Участник]` — список\n`!снятьдв @Участник Причина`", inline=False)
     embed.add_field(name="📋 Логи", value="`!logs [@Участник]`", inline=False)
     embed.add_field(name="💾 Бекап", value="`!backup`\n`!restore`", inline=False)
