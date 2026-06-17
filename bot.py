@@ -118,11 +118,13 @@ try:
 except:
     pass
 
-c.execute("PRAGMA table_info(warehouse)")
-columns = [col[1] for col in c.fetchall()]
-if 'category' not in columns:
-    c.execute("ALTER TABLE warehouse ADD COLUMN category TEXT DEFAULT 'Проче'")
+def ensure_warehouse_category():
+    c.execute("PRAGMA table_info(warehouse)")
+    if 'category' not in [col[1] for col in c.fetchall()]:
+        c.execute("ALTER TABLE warehouse ADD COLUMN category TEXT DEFAULT 'Проче'")
+        conn.commit()
 
+ensure_warehouse_category()
 conn.commit()
 
 intents = discord.Intents.default()
@@ -509,6 +511,7 @@ async def return_car(ctx, car_id: int):
 @bot.command(name="псклад", aliases=["сп"])
 @commands.check(is_assistant)
 async def warehouse_put(ctx, item: str, category: str, amount: int):
+    ensure_warehouse_category()
     nick = get_member_nick(ctx.author.id)
     if not nick:
         return await ctx.send('❌ Вы не привязаны к семье.', delete_after=10)
@@ -527,6 +530,7 @@ async def warehouse_put(ctx, item: str, category: str, amount: int):
 @bot.command(name="склад")
 @commands.check(is_deadly)
 async def warehouse_show(ctx, *, category: str = None):
+    ensure_warehouse_category()
     if category:
         allowed_cats = ["Оружие", "Патроны", "Расходники", "Проче"]
         if category not in allowed_cats:
@@ -554,6 +558,7 @@ async def warehouse_show(ctx, *, category: str = None):
 @bot.command(name="всклад", aliases=["взятьсклад"])
 @commands.check(is_deadly)
 async def warehouse_take(ctx, item: str, amount: int):
+    ensure_warehouse_category()
     nick = get_member_nick(ctx.author.id)
     if not nick:
         return await ctx.send('❌ Вы не привязаны к семье.', delete_after=10)
