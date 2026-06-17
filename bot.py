@@ -598,7 +598,7 @@ async def warehouse_show(ctx, *, category: str = None):
     embed = discord.Embed(title="🗄️ СЕМЕЙНЫЙ СКЛАД", color=0x8B5E3C)
     embed.description = content
     embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/2938/2938122.png")
-    embed.set_footer(text=f"Обновлено: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | Семья")
+    embed.set_footer(text=f"Обновлено: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}")
     await ctx.send(embed=embed)
 
 @bot.command(name="всклад", aliases=["взятьсклад"])
