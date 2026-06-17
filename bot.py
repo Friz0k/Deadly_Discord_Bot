@@ -33,6 +33,7 @@ DB_PATH = 'gta_rp.db'
 conn = sqlite3.connect(DB_PATH)
 c = conn.cursor()
 
+# Создание таблиц
 c.execute('''CREATE TABLE IF NOT EXISTS family_members (
     nickname TEXT PRIMARY KEY,
     discord_id INTEGER UNIQUE,
@@ -61,19 +62,6 @@ c.execute('''CREATE TABLE IF NOT EXISTS bank (
 )''')
 c.execute("INSERT INTO bank (balance) SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM bank)")
 
-c.execute('''CREATE TABLE IF NOT EXISTS contracts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT,
-    participants TEXT,
-    due_date TEXT,
-    bills INTEGER DEFAULT 0,
-    created_by TEXT,
-    created_at TEXT,
-    status TEXT DEFAULT 'создан',
-    message_id INTEGER,
-    notified_hours INTEGER DEFAULT 0
-)''')
-
 c.execute('''CREATE TABLE IF NOT EXISTS disciplinary_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nickname TEXT,
@@ -93,20 +81,45 @@ c.execute('''CREATE TABLE IF NOT EXISTS logs (
     timestamp TEXT
 )''')
 
-# --- Надёжные миграции ---
+# --- Принудительная проверка схемы contracts ---
+def fix_contracts_schema():
+    """Проверяет наличие всех нужных столбцов в contracts, если нет – пересоздаёт таблицу."""
+    required_columns = {
+        'id': 'INTEGER PRIMARY KEY AUTOINCREMENT',
+        'title': 'TEXT',
+        'participants': 'TEXT',
+        'due_date': 'TEXT',
+        'bills': 'INTEGER DEFAULT 0',
+        'created_by': 'TEXT',
+        'created_at': 'TEXT',
+        'status': "TEXT DEFAULT 'создан'",
+        'message_id': 'INTEGER',
+        'notified_hours': 'INTEGER DEFAULT 0'
+    }
+    # Получаем реальные столбцы
+    c.execute("PRAGMA table_info(contracts)")
+    existing_columns = [col[1] for col in c.fetchall()]
+
+    if not set(required_columns.keys()).issubset(set(existing_columns)):
+        # Сохраняем старые данные (если нужно, но сейчас просто удалим)
+        c.execute("DROP TABLE IF EXISTS contracts")
+        # Создаём заново с правильной структурой
+        columns_def = ', '.join(f'{name} {dtype}' for name, dtype in required_columns.items())
+        c.execute(f'CREATE TABLE contracts ({columns_def})')
+        conn.commit()
+        print("Таблица contracts была пересоздана с правильной схемой.")
+
+fix_contracts_schema()
+
+# Миграции для остальных таблиц
 def add_column_if_not_exists(table, column, type_def):
     c.execute(f"PRAGMA table_info({table})")
-    columns = [col[1] for col in c.fetchall()]
-    if column not in columns:
+    if column not in [col[1] for col in c.fetchall()]:
         c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {type_def}")
         conn.commit()
 
 add_column_if_not_exists("family_members", "discord_id", "INTEGER")
 add_column_if_not_exists("disciplinary_actions", "discord_id", "INTEGER")
-add_column_if_not_exists("contracts", "bills", "INTEGER DEFAULT 0")
-add_column_if_not_exists("contracts", "status", "TEXT DEFAULT 'создан'")
-add_column_if_not_exists("contracts", "message_id", "INTEGER")
-add_column_if_not_exists("contracts", "notified_hours", "INTEGER DEFAULT 0")
 add_column_if_not_exists("warehouse", "category", "TEXT DEFAULT 'Проче'")
 
 conn.commit()
@@ -143,15 +156,6 @@ def auto_return():
     conn.commit()
 
 def log_action(discord_id, nickname, action, details=""):
-    c.execute('''CREATE TABLE IF NOT EXISTS logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        discord_id INTEGER,
-        nickname TEXT,
-        action TEXT,
-        details TEXT,
-        timestamp TEXT
-    )''')
-    conn.commit()
     c.execute("INSERT INTO logs (discord_id, nickname, action, details, timestamp) VALUES (?,?,?,?,?)",
               (discord_id, nickname, action, details, datetime.datetime.now().isoformat()))
     conn.commit()
@@ -504,7 +508,6 @@ async def return_car(ctx, car_id: int):
 @bot.command(name="псклад", aliases=["сп"])
 @commands.check(is_assistant)
 async def warehouse_put(ctx, item: str, category: str, amount: int):
-    add_column_if_not_exists("warehouse", "category", "TEXT DEFAULT 'Проче'")
     nick = get_member_nick(ctx.author.id)
     if not nick:
         return await ctx.send('❌ Вы не привязаны к семье.', delete_after=10)
@@ -523,7 +526,6 @@ async def warehouse_put(ctx, item: str, category: str, amount: int):
 @bot.command(name="склад")
 @commands.check(is_deadly)
 async def warehouse_show(ctx, *, category: str = None):
-    add_column_if_not_exists("warehouse", "category", "TEXT DEFAULT 'Проче'")
     if category:
         allowed_cats = ["Оружие", "Патроны", "Расходники", "Проче"]
         if category not in allowed_cats:
@@ -551,7 +553,6 @@ async def warehouse_show(ctx, *, category: str = None):
 @bot.command(name="всклад", aliases=["взятьсклад"])
 @commands.check(is_deadly)
 async def warehouse_take(ctx, item: str, amount: int):
-    add_column_if_not_exists("warehouse", "category", "TEXT DEFAULT 'Проче'")
     nick = get_member_nick(ctx.author.id)
     if not nick:
         return await ctx.send('❌ Вы не привязаны к семье.', delete_after=10)
@@ -746,16 +747,6 @@ async def dv_remove(ctx, member: discord.Member, *, reason: str):
 @bot.command(name="logs")
 @commands.check(is_assistant)
 async def show_logs(ctx, member: discord.Member = None):
-    c.execute('''CREATE TABLE IF NOT EXISTS logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        discord_id INTEGER,
-        nickname TEXT,
-        action TEXT,
-        details TEXT,
-        timestamp TEXT
-    )''')
-    conn.commit()
-
     try:
         if member:
             c.execute("SELECT nickname, action, details, timestamp FROM logs WHERE discord_id=? ORDER BY id DESC LIMIT 10", (member.id,))
