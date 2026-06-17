@@ -93,7 +93,6 @@ c.execute('''CREATE TABLE IF NOT EXISTS logs (
     timestamp TEXT
 )''')
 
-# миграции
 try:
     c.execute("ALTER TABLE family_members ADD COLUMN discord_id INTEGER")
 except:
@@ -104,10 +103,6 @@ except:
     pass
 try:
     c.execute("ALTER TABLE contracts ADD COLUMN bills INTEGER DEFAULT 0")
-except:
-    pass
-try:
-    c.execute("ALTER TABLE warehouse ADD COLUMN category TEXT DEFAULT 'Проче'")
 except:
     pass
 try:
@@ -122,6 +117,11 @@ try:
     c.execute("ALTER TABLE contracts ADD COLUMN notified_hours INTEGER DEFAULT 0")
 except:
     pass
+
+c.execute("PRAGMA table_info(warehouse)")
+columns = [col[1] for col in c.fetchall()]
+if 'category' not in columns:
+    c.execute("ALTER TABLE warehouse ADD COLUMN category TEXT DEFAULT 'Проче'")
 
 conn.commit()
 
