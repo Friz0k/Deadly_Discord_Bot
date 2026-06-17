@@ -54,7 +54,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS vehicles (
 c.execute('''CREATE TABLE IF NOT EXISTS warehouse (
     item TEXT PRIMARY KEY,
     amount INTEGER CHECK(amount >= 0),
-    category TEXT DEFAULT 'Проч'
+    category TEXT DEFAULT 'Прочее'
 )''')
 
 c.execute('''CREATE TABLE IF NOT EXISTS bank (
@@ -118,8 +118,10 @@ def add_column_if_not_exists(table, column, type_def):
 
 add_column_if_not_exists("family_members", "discord_id", "INTEGER")
 add_column_if_not_exists("disciplinary_actions", "discord_id", "INTEGER")
-add_column_if_not_exists("warehouse", "category", "TEXT DEFAULT 'Проче'")
+add_column_if_not_exists("warehouse", "category", "TEXT DEFAULT 'Прочее'")
 
+# Обновление старых записей "Проче" -> "Прочее"
+c.execute("UPDATE warehouse SET category = 'Прочее' WHERE category = 'Проче'")
 conn.commit()
 
 intents = discord.Intents.default()
@@ -540,8 +542,9 @@ async def warehouse_put(ctx, item: str, category: str, amount: int):
     c.execute("INSERT INTO warehouse (item, category, amount) VALUES (?, ?, ?) ON CONFLICT(item) DO UPDATE SET amount = amount + ?, category = ?",
               (item, category, amount, amount, category))
     conn.commit()
-    log_action(ctx.author.id, nick, "Положить на склад", f"{item} ({category}) +{amount}")
-    await ctx.send(f'✅ `{nick}` положил {amount} x **{item}** ({category}) на склад.')
+    pretty_item = item.replace("_", " ").title()
+    log_action(ctx.author.id, nick, "Положить на склад", f"{pretty_item} ({category}) +{amount}")
+    await ctx.send(f'✅ `{nick}` положил {amount} x **{pretty_item}** ({category}) на склад.')
 
 @bot.command(name="склад")
 @commands.check(is_deadly)
@@ -577,7 +580,7 @@ async def warehouse_show(ctx, *, category: str = None):
     else:
         content_parts = []
         total_all = 0
-        for cat in ["Оружие", "Патроны", "Расходники", "Проче"]:
+        for cat in ["Оружие", "Патроны", "Расходники", "Прочее"]:
             items_in_cat = [(item, amount) for item, amount, c in rows if c == cat]
             if not items_in_cat:
                 continue
@@ -598,7 +601,7 @@ async def warehouse_show(ctx, *, category: str = None):
     embed = discord.Embed(title="🗄️ СЕМЕЙНЫЙ СКЛАД", color=0x8B5E3C)
     embed.description = content
     embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/2938/2938122.png")
-    embed.set_footer(text=f"Обновлено: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}")
+    embed.set_footer(text=f"Обновлено: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | Семья")
     await ctx.send(embed=embed)
 
 @bot.command(name="всклад", aliases=["взятьсклад"])
@@ -616,8 +619,9 @@ async def warehouse_take(ctx, item: str, amount: int):
         return await ctx.send(f'❌ Недостаточно `{item}` на складе.', delete_after=10)
     c.execute("UPDATE warehouse SET amount = amount - ? WHERE item=?", (amount, item))
     conn.commit()
-    log_action(ctx.author.id, nick, "Взять со склада", f"{item} -{amount}")
-    await ctx.send(f'✅ `{nick}` забрал {amount} x **{item}** со склада.')
+    pretty_item = item.replace("_", " ").title()
+    log_action(ctx.author.id, nick, "Взять со склада", f"{pretty_item} -{amount}")
+    await ctx.send(f'✅ `{nick}` забрал {amount} x **{pretty_item}** со склада.')
 
 @bot.command(name="банк")
 @commands.check(is_assistant)
