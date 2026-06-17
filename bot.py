@@ -81,29 +81,34 @@ c.execute('''CREATE TABLE IF NOT EXISTS logs (
     timestamp TEXT
 )''')
 
-def fix_contracts_schema():
-    required = ['id', 'title', 'participants', 'due_date', 'bills', 'created_by', 'created_at',
-                'status', 'message_id', 'notified_hours', 'started_at']
-    c.execute("PRAGMA table_info(contracts)")
-    existing = [col[1] for col in c.fetchall()]
-    if not all(col in existing for col in required):
-        c.execute("DROP TABLE IF EXISTS contracts")
-        c.execute('''CREATE TABLE contracts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT,
-            participants TEXT,
-            due_date TEXT,
-            bills INTEGER DEFAULT 0,
-            created_by TEXT,
-            created_at TEXT,
-            status TEXT DEFAULT 'создан',
-            message_id INTEGER,
-            notified_hours INTEGER DEFAULT 0,
-            started_at TEXT
-        )''')
-        conn.commit()
+def ensure_contracts_columns():
+    c.execute('''CREATE TABLE IF NOT EXISTS contracts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        participants TEXT,
+        due_date TEXT,
+        bills INTEGER DEFAULT 0,
+        created_by TEXT,
+        created_at TEXT,
+        status TEXT DEFAULT 'создан',
+        message_id INTEGER,
+        notified_hours INTEGER DEFAULT 0,
+        started_at TEXT
+    )''')
+    required = {
+        'bills': 'INTEGER DEFAULT 0',
+        'status': "TEXT DEFAULT 'создан'",
+        'message_id': 'INTEGER',
+        'notified_hours': 'INTEGER DEFAULT 0',
+        'started_at': 'TEXT'
+    }
+    for col, dtype in required.items():
+        c.execute(f"PRAGMA table_info(contracts)")
+        if col not in [col[1] for col in c.fetchall()]:
+            c.execute(f"ALTER TABLE contracts ADD COLUMN {col} {dtype}")
+    conn.commit()
 
-fix_contracts_schema()
+ensure_contracts_columns()
 
 def add_column_if_not_exists(table, column, type_def):
     c.execute(f"PRAGMA table_info({table})")
@@ -114,7 +119,6 @@ def add_column_if_not_exists(table, column, type_def):
 add_column_if_not_exists("family_members", "discord_id", "INTEGER")
 add_column_if_not_exists("disciplinary_actions", "discord_id", "INTEGER")
 add_column_if_not_exists("warehouse", "category", "TEXT DEFAULT 'Проче'")
-add_column_if_not_exists("contracts", "started_at", "TEXT")
 
 conn.commit()
 
@@ -316,8 +320,8 @@ async def on_raw_reaction_add(payload):
     c.execute("SELECT id, status FROM contracts WHERE message_id=?", (payload.message_id,))
     row = c.fetchone()
     if row and row[1] == 'создан':
-        now = datetime.datetime.now().isoformat()
-        c.execute("UPDATE contracts SET status='в процессе', started_at=? WHERE id=?", (now.isoformat(), row[0],))
+        now = datetime.datetime.now()
+        c.execute("UPDATE contracts SET status='в процессе', started_at=? WHERE id=?", (now.isoformat(), row[0]))
         conn.commit()
         channel = bot.get_channel(payload.channel_id)
         if channel:
@@ -341,7 +345,6 @@ async def on_command_error(ctx, error):
     else:
         await ctx.send(f"❌ Ошибка: {str(error)}", delete_after=15)
 
-# --------------------------- Бекап и сброс ---------------------------
 @bot.command(name="backup")
 @commands.check(is_assistant)
 async def backup_db(ctx):
@@ -395,7 +398,6 @@ async def reset_contracts(ctx):
     conn.commit()
     await ctx.send("✅ Таблица контрактов исправлена. Можете пользоваться `!вк`.")
 
-# --------------------------- Остальные команды ---------------------------
 @bot.command(name="id")
 @commands.check(is_recruiter)
 async def get_id(ctx, member: discord.Member = None):
@@ -555,17 +557,48 @@ async def warehouse_show(ctx, *, category: str = None):
     if not rows:
         return await ctx.send('📦 Склад пуст.', delete_after=10)
 
-    embed = discord.Embed(title='📦 Склад', color=0x00ff00)
+    cat_emojis = {"Оружие": "🔫", "Патроны": "📦", "Расходники": "💊", "Проче": "🧰"}
+    def indicator(amount):
+        if amount >= 50: return "🟩"
+        if amount >= 20: return "🟨"
+        return "🟥"
+
     if category:
-        desc = '\n'.join(f'• {item}: {amount} шт.' for item, amount in rows)
-        embed.description = desc
+        total = sum(amount for _, amount in rows)
+        lines = []
+        for item, amount in rows:
+            name = item.replace("_", " ").title()
+            lines.append(f"{indicator(amount)} **{name}** — `{amount}` шт.")
+        items_text = "\n".join(lines)
+        cat_display = f"{cat_emojis.get(category, '📦')} {category.upper()}"
+        header = f"┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n┃   {cat_display.center(22)} ┃\n┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫"
+        footer = f"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n**Всего:** {total} шт."
+        content = f"{header}\n{items_text}\n{footer}"
     else:
-        cats = {}
-        for item, amount, cat in rows:
-            cats.setdefault(cat, []).append(f'• {item}: {amount} шт.')
+        content_parts = []
+        total_all = 0
         for cat in ["Оружие", "Патроны", "Расходники", "Проче"]:
-            if cat in cats:
-                embed.add_field(name=cat, value='\n'.join(cats[cat]), inline=False)
+            items_in_cat = [(item, amount) for item, amount, c in rows if c == cat]
+            if not items_in_cat:
+                continue
+            cat_total = sum(amount for _, amount in items_in_cat)
+            total_all += cat_total
+            lines = []
+            for item, amount in items_in_cat:
+                name = item.replace("_", " ").title()
+                lines.append(f"{indicator(amount)} **{name}** — `{amount}` шт.")
+            items_text = "\n".join(lines)
+            cat_display = f"{cat_emojis.get(cat, '📦')} {cat.upper()}"
+            header = f"┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n┃   {cat_display.center(22)} ┃\n┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫"
+            footer = f"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n"
+            content_parts.append(f"{header}\n{items_text}\n{footer}")
+        content_parts.append(f"**🧾 ВСЕГО НА СКЛАДЕ:** `{total_all}` предметов")
+        content = "\n".join(content_parts)
+
+    embed = discord.Embed(title="🗄️ СЕМЕЙНЫЙ СКЛАД", color=0x8B5E3C)
+    embed.description = content
+    embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/2938/2938122.png")
+    embed.set_footer(text=f"Обновлено: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | Семья")
     await ctx.send(embed=embed)
 
 @bot.command(name="всклад", aliases=["взятьсклад"])
