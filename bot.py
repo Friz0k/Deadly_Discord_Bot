@@ -54,7 +54,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS vehicles (
 c.execute('''CREATE TABLE IF NOT EXISTS warehouse (
     item TEXT PRIMARY KEY,
     amount INTEGER CHECK(amount >= 0),
-    category TEXT DEFAULT 'Проче'
+    category TEXT DEFAULT 'Проч'
 )''')
 
 c.execute('''CREATE TABLE IF NOT EXISTS bank (
@@ -534,7 +534,7 @@ async def warehouse_put(ctx, item: str, category: str, amount: int):
     nick = nick.replace("_", " ")
     if amount <= 0:
         return await ctx.send('❌ Количество > 0.', delete_after=10)
-    allowed_cats = ["Оружие", "Патроны", "Расходники", "Проче"]
+    allowed_cats = ["Оружие", "Патроны", "Расходники", "Прочее"]
     if category not in allowed_cats:
         return await ctx.send(f'❌ Неверная категория. Допустимые: {", ".join(allowed_cats)}', delete_after=10)
     c.execute("INSERT INTO warehouse (item, category, amount) VALUES (?, ?, ?) ON CONFLICT(item) DO UPDATE SET amount = amount + ?, category = ?",
@@ -547,7 +547,7 @@ async def warehouse_put(ctx, item: str, category: str, amount: int):
 @commands.check(is_deadly)
 async def warehouse_show(ctx, *, category: str = None):
     if category:
-        allowed_cats = ["Оружие", "Патроны", "Расходники", "Проче"]
+        allowed_cats = ["Оружие", "Патроны", "Расходники", "Прочее"]
         if category not in allowed_cats:
             return await ctx.send(f'❌ Неверная категория. Доступные: {", ".join(allowed_cats)}', delete_after=10)
         c.execute("SELECT item, amount FROM warehouse WHERE category=? AND amount > 0", (category,))
@@ -557,7 +557,7 @@ async def warehouse_show(ctx, *, category: str = None):
     if not rows:
         return await ctx.send('📦 Склад пуст.', delete_after=10)
 
-    cat_emojis = {"Оружие": "🔫", "Патроны": "📦", "Расходники": "💊", "Проче": "🧰"}
+    cat_emojis = {"Оружие": "🔫", "Патроны": "📦", "Расходники": "💊", "Прочее": "🧰"}
     def indicator(amount):
         if amount >= 50: return "🟩"
         if amount >= 20: return "🟨"
