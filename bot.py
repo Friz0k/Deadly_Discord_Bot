@@ -93,39 +93,22 @@ c.execute('''CREATE TABLE IF NOT EXISTS logs (
     timestamp TEXT
 )''')
 
-# миграции
-try:
-    c.execute("ALTER TABLE family_members ADD COLUMN discord_id INTEGER")
-except:
-    pass
-try:
-    c.execute("ALTER TABLE disciplinary_actions ADD COLUMN discord_id INTEGER")
-except:
-    pass
-try:
-    c.execute("ALTER TABLE contracts ADD COLUMN bills INTEGER DEFAULT 0")
-except:
-    pass
-try:
-    c.execute("ALTER TABLE contracts ADD COLUMN status TEXT DEFAULT 'создан'")
-except:
-    pass
-try:
-    c.execute("ALTER TABLE contracts ADD COLUMN message_id INTEGER")
-except:
-    pass
-try:
-    c.execute("ALTER TABLE contracts ADD COLUMN notified_hours INTEGER DEFAULT 0")
-except:
-    pass
-
-def ensure_warehouse_category():
-    c.execute("PRAGMA table_info(warehouse)")
-    if 'category' not in [col[1] for col in c.fetchall()]:
-        c.execute("ALTER TABLE warehouse ADD COLUMN category TEXT DEFAULT 'Проче'")
+# --- Надёжные миграции ---
+def add_column_if_not_exists(table, column, type_def):
+    c.execute(f"PRAGMA table_info({table})")
+    columns = [col[1] for col in c.fetchall()]
+    if column not in columns:
+        c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {type_def}")
         conn.commit()
 
-ensure_warehouse_category()
+add_column_if_not_exists("family_members", "discord_id", "INTEGER")
+add_column_if_not_exists("disciplinary_actions", "discord_id", "INTEGER")
+add_column_if_not_exists("contracts", "bills", "INTEGER DEFAULT 0")
+add_column_if_not_exists("contracts", "status", "TEXT DEFAULT 'создан'")
+add_column_if_not_exists("contracts", "message_id", "INTEGER")
+add_column_if_not_exists("contracts", "notified_hours", "INTEGER DEFAULT 0")
+add_column_if_not_exists("warehouse", "category", "TEXT DEFAULT 'Проче'")
+
 conn.commit()
 
 intents = discord.Intents.default()
@@ -521,7 +504,7 @@ async def return_car(ctx, car_id: int):
 @bot.command(name="псклад", aliases=["сп"])
 @commands.check(is_assistant)
 async def warehouse_put(ctx, item: str, category: str, amount: int):
-    ensure_warehouse_category()
+    add_column_if_not_exists("warehouse", "category", "TEXT DEFAULT 'Проче'")
     nick = get_member_nick(ctx.author.id)
     if not nick:
         return await ctx.send('❌ Вы не привязаны к семье.', delete_after=10)
@@ -540,7 +523,7 @@ async def warehouse_put(ctx, item: str, category: str, amount: int):
 @bot.command(name="склад")
 @commands.check(is_deadly)
 async def warehouse_show(ctx, *, category: str = None):
-    ensure_warehouse_category()
+    add_column_if_not_exists("warehouse", "category", "TEXT DEFAULT 'Проче'")
     if category:
         allowed_cats = ["Оружие", "Патроны", "Расходники", "Проче"]
         if category not in allowed_cats:
@@ -568,7 +551,7 @@ async def warehouse_show(ctx, *, category: str = None):
 @bot.command(name="всклад", aliases=["взятьсклад"])
 @commands.check(is_deadly)
 async def warehouse_take(ctx, item: str, amount: int):
-    ensure_warehouse_category()
+    add_column_if_not_exists("warehouse", "category", "TEXT DEFAULT 'Проче'")
     nick = get_member_nick(ctx.author.id)
     if not nick:
         return await ctx.send('❌ Вы не привязаны к семье.', delete_after=10)
