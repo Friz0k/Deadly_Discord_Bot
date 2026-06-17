@@ -18,7 +18,8 @@ DEADLY_ROLE = "Deadly"
 DISCIPLINE_ROLE = "Discipline"
 
 CONTRACT_NOTIFY_ROLE_ID = 1516422622122999888
-CONTRACT_CHANNEL_ID = 1515046132936343633
+CONTRACT_CHANNEL_ID = 1515046132936343633          # для ежечасных тегов
+CONTRACT_STATUS_CHANNEL_ID = 1515039473581166642   # для статусов (завершён/просрочен)
 
 ROLE_PRED = 1473709199488975020
 ROLE_1VYG = 1473709489780953260
@@ -80,9 +81,9 @@ c.execute('''CREATE TABLE IF NOT EXISTS logs (
     timestamp TEXT
 )''')
 
-# --- Принудительная проверка схемы contracts при старте ---
 def fix_contracts_schema():
-    required = ['id', 'title', 'participants', 'due_date', 'bills', 'created_by', 'created_at', 'status', 'message_id', 'notified_hours']
+    required = ['id', 'title', 'participants', 'due_date', 'bills', 'created_by', 'created_at',
+                'status', 'message_id', 'notified_hours', 'started_at']
     c.execute("PRAGMA table_info(contracts)")
     existing = [col[1] for col in c.fetchall()]
     if not all(col in existing for col in required):
@@ -97,14 +98,13 @@ def fix_contracts_schema():
             created_at TEXT,
             status TEXT DEFAULT 'создан',
             message_id INTEGER,
-            notified_hours INTEGER DEFAULT 0
+            notified_hours INTEGER DEFAULT 0,
+            started_at TEXT
         )''')
         conn.commit()
-        print("⚠️ Таблица contracts пересоздана.")
 
 fix_contracts_schema()
 
-# Миграции
 def add_column_if_not_exists(table, column, type_def):
     c.execute(f"PRAGMA table_info({table})")
     if column not in [col[1] for col in c.fetchall()]:
@@ -114,6 +114,7 @@ def add_column_if_not_exists(table, column, type_def):
 add_column_if_not_exists("family_members", "discord_id", "INTEGER")
 add_column_if_not_exists("disciplinary_actions", "discord_id", "INTEGER")
 add_column_if_not_exists("warehouse", "category", "TEXT DEFAULT 'Проче'")
+add_column_if_not_exists("contracts", "started_at", "TEXT")
 
 conn.commit()
 
@@ -261,46 +262,49 @@ async def auto_remove_expired_discipline():
 @tasks.loop(hours=1)
 async def contract_reminders():
     now = datetime.datetime.now()
-    c.execute("SELECT id, title, participants, due_date, notified_hours, message_id FROM contracts WHERE status='в процессе'")
+    c.execute("SELECT id, title, participants, due_date, notified_hours, message_id, started_at FROM contracts WHERE status='в процессе'")
     contracts = c.fetchall()
     guild = bot.guilds[0] if bot.guilds else None
     if not guild:
         return
     channel = guild.get_channel(CONTRACT_CHANNEL_ID)
+    status_channel = guild.get_channel(CONTRACT_STATUS_CHANNEL_ID)
     if not channel:
         return
 
-    for cid, title, participants, due_str, notified, msg_id in contracts:
+    for cid, title, participants, due_str, notified, msg_id, started_str in contracts:
         try:
             due_date = datetime.datetime.fromisoformat(due_str)
+            started_at = datetime.datetime.fromisoformat(started_str) if started_str else None
         except:
             continue
         if due_date > now:
-            remaining = due_date - now
-            hours_left = remaining.total_seconds() / 3600
+            # Ежечасное напоминание с тегами и прошедшим временем
+            if started_at:
+                elapsed = now - started_at
+                hours_passed = int(elapsed.total_seconds() // 3600)
+            else:
+                hours_passed = 0
+            participants_mentions = ', '.join([f'<@{p.strip()}>' for p in participants.split(',') if p.strip().isdigit()])
             c.execute("UPDATE contracts SET notified_hours = notified_hours + 1 WHERE id=?", (cid,))
             conn.commit()
-            participants_mentions = ', '.join([f'<@{p.strip()}>' for p in participants.split(',') if p.strip().isdigit()])
-            embed = discord.Embed(title=f"⏳ Контракт «{title}»", 
-                                  description=f"Осталось {hours_left:.1f} ч. до дедлайна.",
-                                  color=0xf1c40f)
-            embed.add_field(name="Участники", value=participants_mentions or "Не указаны")
-            embed.add_field(name="Дедлайн", value=due_date.strftime("%d.%m.%Y %H:%M"))
-            await channel.send(embed=embed)
+            await channel.send(f'{participants_mentions} У ВАС ИДЕТ КОНТРАКТ прошло: {hours_passed} ч.')
         else:
+            # Дедлайн прошёл – отправляем в статусный канал
             c.execute("UPDATE contracts SET status='выполнен' WHERE id=?", (cid,))
             conn.commit()
             participants_mentions = ', '.join([f'<@{p.strip()}>' for p in participants.split(',') if p.strip().isdigit()])
-            embed = discord.Embed(title=f"✅ Контракт «{title}» выполнен",
-                                  description="Время выполнения истекло.",
-                                  color=0x2ecc71)
-            embed.add_field(name="Участники", value=participants_mentions or "Не указаны")
-            embed.add_field(name="Дедлайн", value=due_date.strftime("%d.%m.%Y %H:%M"))
-            await channel.send(embed=embed)
+            if status_channel:
+                embed = discord.Embed(title=f"✅ Контракт «{title}» выполнен",
+                                      description="Время выполнения истекло.",
+                                      color=0x2ecc71)
+                embed.add_field(name="Участники", value=participants_mentions or "Не указаны")
+                embed.add_field(name="Дедлайн", value=due_date.strftime("%d.%m.%Y %H:%M"))
+                await status_channel.send(embed=embed)
 
 @bot.event
 async def on_raw_reaction_add(payload):
-    if payload.emoji.name != '✅' or payload.channel_id != CONTRACT_CHANNEL_ID:
+    if payload.emoji.name != '✅' or payload.channel_id != CONTRACT_STATUS_CHANNEL_ID:
         return
     guild = bot.get_guild(payload.guild_id)
     if guild is None:
@@ -314,7 +318,8 @@ async def on_raw_reaction_add(payload):
     c.execute("SELECT id, status FROM contracts WHERE message_id=?", (payload.message_id,))
     row = c.fetchone()
     if row and row[1] == 'создан':
-        c.execute("UPDATE contracts SET status='в процессе' WHERE id=?", (row[0],))
+        now = datetime.datetime.now().isoformat()
+        c.execute("UPDATE contracts SET status='в процессе', started_at=? WHERE id=?", (now.isoformat(), row[0],))
         conn.commit()
         channel = bot.get_channel(payload.channel_id)
         if channel:
@@ -336,31 +341,7 @@ async def on_command_error(ctx, error):
     elif isinstance(error, commands.BadArgument):
         await ctx.send(f"❌ Неправильный аргумент. Проверьте формат.", delete_after=10)
     else:
-        err_str = str(error)
-        if "no such column: status" in err_str:
-            await ctx.send("❌ Таблица контрактов устарела. Введите `!reset_contracts` для исправления.", delete_after=20)
-        else:
-            await ctx.send(f"❌ Ошибка: {err_str}", delete_after=15)
-
-# --- КОМАНДА ИСПРАВЛЕНИЯ ---
-@bot.command(name="reset_contracts")
-@commands.check(is_assistant)
-async def reset_contracts(ctx):
-    c.execute("DROP TABLE IF EXISTS contracts")
-    c.execute('''CREATE TABLE contracts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT,
-        participants TEXT,
-        due_date TEXT,
-        bills INTEGER DEFAULT 0,
-        created_by TEXT,
-        created_at TEXT,
-        status TEXT DEFAULT 'создан',
-        message_id INTEGER,
-        notified_hours INTEGER DEFAULT 0
-    )''')
-    conn.commit()
-    await ctx.send("✅ Таблица контрактов исправлена. Можете пользоваться `!вк`.")
+        await ctx.send(f"❌ Ошибка: {str(error)}", delete_after=15)
 
 @bot.command(name="backup")
 @commands.check(is_assistant)
@@ -417,7 +398,7 @@ async def add_family(ctx, discord_id: int, *, nickname: str):
     log_action(ctx.author.id, get_member_nick(ctx.author.id) or str(ctx.author), "Добавление в семью", f"Добавлен {nickname} ({discord_id})")
     await ctx.send(f'✅ <@{discord_id}> (`{nickname}`) добавлен в семью.')
 
-@bot.command(name="уемья", aliases=["удалсемья", "удалить-из-семьи"])
+@bot.command(name="усемья", aliases=["удалсемья", "удалить-из-семьи", "уемья"])
 @commands.check(is_assistant)
 async def remove_family(ctx, discord_id: int):
     c.execute("SELECT nickname FROM family_members WHERE discord_id=?", (discord_id,))
@@ -677,9 +658,10 @@ async def take_contract_new(ctx, members: commands.Greedy[discord.Member] = None
     conn.commit()
     contract_id = c.lastrowid
 
-    channel = ctx.guild.get_channel(CONTRACT_CHANNEL_ID)
-    if channel is None:
-        return await ctx.send("❌ Канал уведомлений не найден.", delete_after=10)
+    # Отправляем сообщение в статусный канал (там будет реакция ✅)
+    status_channel = ctx.guild.get_channel(CONTRACT_STATUS_CHANNEL_ID)
+    if status_channel is None:
+        return await ctx.send("❌ Канал уведомлений о статусе не найден.", delete_after=10)
 
     participants_mentions = ', '.join(m.mention for m in members)
     role_mention = f"<@&{CONTRACT_NOTIFY_ROLE_ID}>"
@@ -689,12 +671,12 @@ async def take_contract_new(ctx, members: commands.Greedy[discord.Member] = None
     if bills:
         embed.add_field(name="Векселей", value=str(bills), inline=False)
     embed.set_footer(text=f"ID: {contract_id} | Поставьте ✅ для старта")
-    msg = await channel.send(content=role_mention, embed=embed)
+    msg = await status_channel.send(content=role_mention, embed=embed)
 
     c.execute("UPDATE contracts SET message_id=? WHERE id=?", (msg.id, contract_id))
     conn.commit()
     log_action(ctx.author.id, get_member_nick(ctx.author.id) or str(ctx.author), "Создание контракта", f"'{title}', участники: {participants_db}")
-    await ctx.send(f"✅ Контракт создан (ID {contract_id}). Уведомления в {channel.mention}.", delete_after=10)
+    await ctx.send(f"✅ Контракт создан (ID {contract_id}). Уведомления придут в каналы.", delete_after=10)
 
 @bot.command(name="дв")
 @commands.check(is_discipline)
@@ -784,11 +766,11 @@ async def show_logs(ctx, member: discord.Member = None):
 @bot.command(name="помощь", aliases=["хелп"])
 async def help_cmd(ctx):
     embed = discord.Embed(title="✨ Помощь по боту", color=0x9b59b6)
-    embed.add_field(name="👥 Семья", value="`!дсемья ID Ник` — добавить\n`!уемья ID` — удалить\n`!семья` — список\n`!id @user` — узнать ID", inline=False)
+    embed.add_field(name="👥 Семья", value="`!дсемья ID Ник` — добавить\n`!усемья ID` — удалить\n`!семья` — список\n`!id @user` — узнать ID", inline=False)
     embed.add_field(name="🚗 Авто", value="`!давто Модель Госномер`\n`!уавто Госномер`\n`!авто` — список\n`!взавто Номер [часы]`\n`!веавто Номер`", inline=False)
     embed.add_field(name="📦 Склад", value="`!склад` — всё содержимое\n`!склад Оружие` — фильтр по категории\n`!псклад Предмет Категория Кол-во`\n`!всклад Предмет Кол-во`", inline=False)
     embed.add_field(name="💰 Банк", value="`!банк` — баланс\n`!пополнить Сумма [Причина]`\n`!снять Сумма [Причина]`", inline=False)
-    embed.add_field(name="📝 Контракты", value="`!вк @участники Название ДД.ММ.ГГГГ ЧЧ:ММ [векселя]`\nЕсли ошибка – используйте `!reset_contracts`", inline=False)
+    embed.add_field(name="📝 Контракты", value="`!вк @участники Название ДД.ММ.ГГГГ ЧЧ:ММ [векселя]`", inline=False)
     embed.add_field(name="⚠️ Дисциплина", value="`!дв @Участники Тип Причина`\n`!выг [@Участник]` — список\n`!снятьдв @Участник Причина`", inline=False)
     embed.add_field(name="📋 Логи", value="`!logs [@Участник]`", inline=False)
     embed.add_field(name="💾 Бекап", value="`!backup`\n`!restore`", inline=False)
