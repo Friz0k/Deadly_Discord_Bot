@@ -18,8 +18,8 @@ DEADLY_ROLE = "Deadly"
 DISCIPLINE_ROLE = "Discipline"
 
 CONTRACT_NOTIFY_ROLE_ID = 1516422622122999888
-CONTRACT_CHANNEL_ID = 1515046132936343633          # для ежечасных тегов
-CONTRACT_STATUS_CHANNEL_ID = 1515039473581166642   # для статусов (завершён/просрочен)
+CONTRACT_CHANNEL_ID = 1515046132936343633
+CONTRACT_STATUS_CHANNEL_ID = 1515039473581166642
 
 ROLE_PRED = 1473709199488975020
 ROLE_1VYG = 1473709489780953260
@@ -279,7 +279,6 @@ async def contract_reminders():
         except:
             continue
         if due_date > now:
-            # Ежечасное напоминание с тегами и прошедшим временем
             if started_at:
                 elapsed = now - started_at
                 hours_passed = int(elapsed.total_seconds() // 3600)
@@ -290,7 +289,6 @@ async def contract_reminders():
             conn.commit()
             await channel.send(f'{participants_mentions} У ВАС ИДЕТ КОНТРАКТ прошло: {hours_passed} ч.')
         else:
-            # Дедлайн прошёл – отправляем в статусный канал
             c.execute("UPDATE contracts SET status='выполнен' WHERE id=?", (cid,))
             conn.commit()
             participants_mentions = ', '.join([f'<@{p.strip()}>' for p in participants.split(',') if p.strip().isdigit()])
@@ -343,6 +341,7 @@ async def on_command_error(ctx, error):
     else:
         await ctx.send(f"❌ Ошибка: {str(error)}", delete_after=15)
 
+# --------------------------- Бекап и сброс ---------------------------
 @bot.command(name="backup")
 @commands.check(is_assistant)
 async def backup_db(ctx):
@@ -376,6 +375,27 @@ async def restore_db(ctx):
         if os.path.exists(DB_PATH + '.backup'):
             os.rename(DB_PATH + '.backup', DB_PATH)
 
+@bot.command(name="reset_contracts")
+@commands.check(is_assistant)
+async def reset_contracts(ctx):
+    c.execute("DROP TABLE IF EXISTS contracts")
+    c.execute('''CREATE TABLE contracts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        participants TEXT,
+        due_date TEXT,
+        bills INTEGER DEFAULT 0,
+        created_by TEXT,
+        created_at TEXT,
+        status TEXT DEFAULT 'создан',
+        message_id INTEGER,
+        notified_hours INTEGER DEFAULT 0,
+        started_at TEXT
+    )''')
+    conn.commit()
+    await ctx.send("✅ Таблица контрактов исправлена. Можете пользоваться `!вк`.")
+
+# --------------------------- Остальные команды ---------------------------
 @bot.command(name="id")
 @commands.check(is_recruiter)
 async def get_id(ctx, member: discord.Member = None):
@@ -658,7 +678,6 @@ async def take_contract_new(ctx, members: commands.Greedy[discord.Member] = None
     conn.commit()
     contract_id = c.lastrowid
 
-    # Отправляем сообщение в статусный канал (там будет реакция ✅)
     status_channel = ctx.guild.get_channel(CONTRACT_STATUS_CHANNEL_ID)
     if status_channel is None:
         return await ctx.send("❌ Канал уведомлений о статусе не найден.", delete_after=10)
@@ -773,7 +792,7 @@ async def help_cmd(ctx):
     embed.add_field(name="📝 Контракты", value="`!вк @участники Название ДД.ММ.ГГГГ ЧЧ:ММ [векселя]`", inline=False)
     embed.add_field(name="⚠️ Дисциплина", value="`!дв @Участники Тип Причина`\n`!выг [@Участник]` — список\n`!снятьдв @Участник Причина`", inline=False)
     embed.add_field(name="📋 Логи", value="`!logs [@Участник]`", inline=False)
-    embed.add_field(name="💾 Бекап", value="`!backup`\n`!restore`", inline=False)
+    embed.add_field(name="💾 Бекап", value="`!backup`\n`!restore`\n`!reset_contracts` — исправить таблицу контрактов", inline=False)
     await ctx.send(embed=embed)
 
 @bot.event
