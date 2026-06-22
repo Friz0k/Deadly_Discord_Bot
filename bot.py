@@ -20,12 +20,14 @@ DISCIPLINE_ROLE = "Discipline"
 CONTRACT_NOTIFY_ROLE_ID = 1516422622122999888
 CONTRACT_CHANNEL_ID = 1515046132936343633
 CONTRACT_STATUS_CHANNEL_ID = 1515039473581166642
+SERVER_LOG_CHANNEL_ID = 1518296636030325017
 
 ROLE_PRED = 1473709199488975020
 ROLE_1VYG = 1473709489780953260
 ROLE_2VYG = 1473709343126847549
 ROLE_WARN = 1516422427327074404
 ROLE_FAMILY_AUTO = 1475823094869393591
+ROLE_VACATION_ID = 1517727379198578739
 
 DISC_ROLES = [ROLE_PRED, ROLE_1VYG, ROLE_2VYG, ROLE_WARN]
 
@@ -120,7 +122,6 @@ add_column_if_not_exists("family_members", "discord_id", "INTEGER")
 add_column_if_not_exists("disciplinary_actions", "discord_id", "INTEGER")
 add_column_if_not_exists("warehouse", "category", "TEXT DEFAULT 'Прочее'")
 
-# Обновление старых записей "Проче" -> "Прочее"
 c.execute("UPDATE warehouse SET category = 'Прочее' WHERE category = 'Проче'")
 conn.commit()
 
@@ -213,7 +214,20 @@ async def update_discipline_roles(member, nickname):
 
 @bot.event
 async def on_member_update(before, after):
-    role = after.guild.get_role(ROLE_FAMILY_AUTO)
+    log_channel = after.guild.get_channel(SERVER_LOG_CHANNEL_ID) if after.guild else None
+    if log_channel:
+        added = [role for role in after.roles if role not in before.roles]
+        removed = [role for role in before.roles if role not in after.roles]
+        if added or removed and not after.bot:
+            desc = f"**Пользователь:** {after.mention} ({after.id})\n"
+            if added:
+                desc += "➕ **Выданы роли:** " + ", ".join(role.mention for role in added) + "\n"
+            if removed:
+                desc += "➖ **Сняты роли:** " + ", ".join(role.mention for role in removed) + "\n"
+            embed = discord.Embed(title="🔄 Изменение ролей", description=desc, color=0x3498db, timestamp=datetime.datetime.now())
+            await log_channel.send(embed=embed)
+
+    role = after.guild.get_role(ROLE_FAMILY_AUTO) if after.guild else None
     if not role:
         return
     had_role = role in before.roles
@@ -539,12 +553,12 @@ async def warehouse_put(ctx, item: str, category: str, amount: int):
     allowed_cats = ["Оружие", "Патроны", "Расходники", "Прочее"]
     if category not in allowed_cats:
         return await ctx.send(f'❌ Неверная категория. Допустимые: {", ".join(allowed_cats)}', delete_after=10)
+    item = item.replace("_", " ").title()
     c.execute("INSERT INTO warehouse (item, category, amount) VALUES (?, ?, ?) ON CONFLICT(item) DO UPDATE SET amount = amount + ?, category = ?",
               (item, category, amount, amount, category))
     conn.commit()
-    pretty_item = item.replace("_", " ").title()
-    log_action(ctx.author.id, nick, "Положить на склад", f"{pretty_item} ({category}) +{amount}")
-    await ctx.send(f'✅ `{nick}` положил {amount} x **{pretty_item}** ({category}) на склад.')
+    log_action(ctx.author.id, nick, "Положить на склад", f"{item} ({category}) +{amount}")
+    await ctx.send(f'✅ `{nick}` положил {amount} x **{item}** ({category}) на склад.')
 
 @bot.command(name="склад")
 @commands.check(is_deadly)
@@ -601,7 +615,7 @@ async def warehouse_show(ctx, *, category: str = None):
     embed = discord.Embed(title="🗄️ СЕМЕЙНЫЙ СКЛАД", color=0x8B5E3C)
     embed.description = content
     embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/2938/2938122.png")
-    embed.set_footer(text=f"Обновлено: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')} | Семья")
+    embed.set_footer(text=f"Обновлено: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}")
     await ctx.send(embed=embed)
 
 @bot.command(name="всклад", aliases=["взятьсклад"])
@@ -613,15 +627,15 @@ async def warehouse_take(ctx, item: str, amount: int):
     nick = nick.replace("_", " ")
     if amount <= 0:
         return await ctx.send('❌ Количество > 0.', delete_after=10)
+    item = item.replace("_", " ").title()
     c.execute("SELECT amount FROM warehouse WHERE item=?", (item,))
     row = c.fetchone()
     if not row or row[0] < amount:
         return await ctx.send(f'❌ Недостаточно `{item}` на складе.', delete_after=10)
     c.execute("UPDATE warehouse SET amount = amount - ? WHERE item=?", (amount, item))
     conn.commit()
-    pretty_item = item.replace("_", " ").title()
-    log_action(ctx.author.id, nick, "Взять со склада", f"{pretty_item} -{amount}")
-    await ctx.send(f'✅ `{nick}` забрал {amount} x **{pretty_item}** со склада.')
+    log_action(ctx.author.id, nick, "Взять со склада", f"{item} -{amount}")
+    await ctx.send(f'✅ `{nick}` забрал {amount} x **{item}** со склада.')
 
 @bot.command(name="банк")
 @commands.check(is_assistant)
@@ -745,6 +759,15 @@ async def dv_add(ctx, members: commands.Greedy[discord.Member] = None, action_ty
     if action_type not in allowed:
         return await ctx.send(f'❌ Неверный тип. Допустимые: {", ".join(allowed)}', delete_after=10)
 
+    # Проверка роли "Отпуск"
+    vacation_role = ctx.guild.get_role(ROLE_VACATION_ID)
+    blocked = []
+    for member in members:
+        if vacation_role and vacation_role in member.roles:
+            blocked.append(member.display_name)
+    if blocked:
+        return await ctx.send(f"❌ Нельзя выдать ДВ следующим участникам (Отпуск): {', '.join(blocked)}", delete_after=15)
+
     files = []
     for att in ctx.message.attachments:
         if att.content_type and att.content_type.startswith("image/"):
@@ -786,6 +809,18 @@ async def dv_list(ctx, member: discord.Member = None):
 @commands.check(is_discipline)
 async def dv_remove(ctx, member: discord.Member, *, reason: str):
     nickname = member.display_name.replace(" ", "_")
+
+    # Проверка 7 дней с момента последнего ДВ
+    c.execute("SELECT date FROM disciplinary_actions WHERE nickname=? ORDER BY date DESC LIMIT 1", (nickname,))
+    row = c.fetchone()
+    if row:
+        try:
+            last_dv_date = datetime.datetime.fromisoformat(row[0])
+        except:
+            last_dv_date = None
+        if last_dv_date and (datetime.datetime.now() - last_dv_date).days < 7:
+            days_left = 7 - (datetime.datetime.now() - last_dv_date).days
+            return await ctx.send(f"❌ С момента последнего взыскания прошло менее 7 дней. Осталось: {days_left} дн.", delete_after=10)
 
     c.execute("DELETE FROM disciplinary_actions WHERE id = (SELECT id FROM disciplinary_actions WHERE nickname=? ORDER BY date DESC LIMIT 1)", (nickname,))
     if c.rowcount == 0:
