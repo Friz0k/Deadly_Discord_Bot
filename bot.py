@@ -184,41 +184,77 @@ async def update_discipline_roles(member, nickname):
     if role: await member.add_roles(role, reason=f"Выговоры: {new_vygs}")
 
 @bot.event
-async def on_member_update(before, after):
-    log_channel = after.guild.get_channel(SERVER_LOG_CHANNEL_ID) if after.guild else None
-    if log_channel and not after.bot:
-        if before.nick != after.nick:
+async def on_audit_log_entry_create(entry):
+    log_channel = entry.guild.get_channel(SERVER_LOG_CHANNEL_ID)
+    if not log_channel:
+        return
+    user = entry.user.mention if entry.user else "Неизвестно"
+    target = entry.target.mention if entry.target else "Неизвестно"
+    action = entry.action
+    reason = entry.reason or "Не указана"
+
+    if action == discord.AuditLogAction.member_role_update:
+        embed = discord.Embed(title="🔄 Изменение ролей", color=0x3498db, timestamp=datetime.datetime.now())
+        embed.add_field(name="Инициатор", value=user)
+        embed.add_field(name="Пользователь", value=target)
+        if entry.before.roles != entry.after.roles:
+            added = [role.mention for role in entry.after.roles if role not in entry.before.roles]
+            removed = [role.mention for role in entry.before.roles if role not in entry.after.roles]
+            if added: embed.add_field(name="➕ Выданы роли", value=", ".join(added) or "Нет", inline=False)
+            if removed: embed.add_field(name="➖ Сняты роли", value=", ".join(removed) or "Нет", inline=False)
+        await log_channel.send(embed=embed)
+
+    elif action == discord.AuditLogAction.kick:
+        embed = discord.Embed(title="🥾 Кик участника", color=0xe74c3c, timestamp=datetime.datetime.now())
+        embed.add_field(name="Инициатор", value=user)
+        embed.add_field(name="Пользователь", value=target)
+        embed.add_field(name="Причина", value=reason, inline=False)
+        await log_channel.send(embed=embed)
+
+    elif action == discord.AuditLogAction.ban:
+        embed = discord.Embed(title="🔨 Бан участника", color=0xe74c3c, timestamp=datetime.datetime.now())
+        embed.add_field(name="Инициатор", value=user)
+        embed.add_field(name="Пользователь", value=target)
+        embed.add_field(name="Причина", value=reason, inline=False)
+        await log_channel.send(embed=embed)
+
+    elif action == discord.AuditLogAction.unban:
+        embed = discord.Embed(title="✅ Разбан участника", color=0x2ecc71, timestamp=datetime.datetime.now())
+        embed.add_field(name="Инициатор", value=user)
+        embed.add_field(name="Пользователь", value=target)
+        await log_channel.send(embed=embed)
+
+    elif action == discord.AuditLogAction.member_update:
+        if entry.before.nick != entry.after.nick:
             embed = discord.Embed(title="🔄 Смена ника", color=0x3498db, timestamp=datetime.datetime.now())
-            embed.add_field(name="Пользователь", value=after.mention)
-            embed.add_field(name="Было", value=before.nick or before.name)
-            embed.add_field(name="Стало", value=after.nick or after.name)
+            embed.add_field(name="Инициатор", value=user)
+            embed.add_field(name="Пользователь", value=target)
+            embed.add_field(name="Было", value=entry.before.nick or entry.before.name)
+            embed.add_field(name="Стало", value=entry.after.nick or entry.after.name)
             await log_channel.send(embed=embed)
-        added = [role for role in after.roles if role not in before.roles]
-        removed = [role for role in before.roles if role not in after.roles]
-        if added or removed:
-            desc = f"**Пользователь:** {after.mention} ({after.id})\n"
-            if added: desc += "➕ **Выданы роли:** " + ", ".join(role.mention for role in added) + "\n"
-            if removed: desc += "➖ **Сняты роли:** " + ", ".join(role.mention for role in removed) + "\n"
-            embed = discord.Embed(title="🔄 Изменение ролей", description=desc, color=0x3498db, timestamp=datetime.datetime.now())
-            await log_channel.send(embed=embed)
-    role = after.guild.get_role(ROLE_FAMILY_AUTO) if after.guild else None
-    if not role: return
-    had_role = role in before.roles
-    has_role = role in after.roles
-    if not had_role and has_role:
-        c.execute("SELECT 1 FROM family_members WHERE discord_id=?", (after.id,))
-        if c.fetchone() is None:
-            nick = after.display_name.replace(" ", "_")
-            try:
-                c.execute("INSERT INTO family_members (nickname, discord_id, joined_at) VALUES (?, ?, ?)", (nick, after.id, datetime.datetime.now().isoformat()))
-                conn.commit()
-                log_action(after.id, nick, "Авто-добавление в семью", f"Роль {role.name}")
-            except: pass
-    elif had_role and not has_role:
-        c.execute("DELETE FROM family_members WHERE discord_id=?", (after.id,))
-        if c.rowcount > 0:
-            conn.commit()
-            log_action(after.id, after.display_name, "Авто-удаление из семьи", f"Роль {role.name} снята")
+
+    elif action == discord.AuditLogAction.message_delete:
+        embed = discord.Embed(title="🗑️ Сообщение удалено", color=0xe74c3c, timestamp=datetime.datetime.now())
+        embed.add_field(name="Инициатор", value=user)
+        embed.add_field(name="Автор сообщения", value=target)
+        embed.add_field(name="Канал", value=entry.extra.channel.mention if entry.extra and entry.extra.channel else "Неизвестно")
+        if hasattr(entry, 'before') and hasattr(entry.before, 'content'):
+            embed.add_field(name="Содержание", value=entry.before.content[:1024] or "Нет текста", inline=False)
+        await log_channel.send(embed=embed)
+
+    elif action in [discord.AuditLogAction.channel_create, discord.AuditLogAction.channel_delete, discord.AuditLogAction.channel_update]:
+        channel = entry.target.mention if entry.target else "Неизвестно"
+        embed = discord.Embed(title=f"{'➕ Создан' if action == discord.AuditLogAction.channel_create else '➖ Удалён' if action == discord.AuditLogAction.channel_delete else '🔄 Изменён'} канал",
+                              color=0x3498db, timestamp=datetime.datetime.now())
+        embed.add_field(name="Инициатор", value=user)
+        embed.add_field(name="Канал", value=channel)
+        await log_channel.send(embed=embed)
+
+    elif action == discord.AuditLogAction.overwrite_create:
+        embed = discord.Embed(title="🔒 Изменены права канала", color=0x3498db, timestamp=datetime.datetime.now())
+        embed.add_field(name="Инициатор", value=user)
+        embed.add_field(name="Канал", value=entry.target.mention if entry.target else "Неизвестно")
+        await log_channel.send(embed=embed)
 
 @bot.event
 async def on_voice_state_update(member, before, after):
@@ -240,40 +276,6 @@ async def on_voice_state_update(member, before, after):
         embed.add_field(name="Пользователь", value=member.mention)
         embed.add_field(name="Из", value=before.channel.name)
         embed.add_field(name="В", value=after.channel.name)
-        await log_channel.send(embed=embed)
-
-@bot.event
-async def on_message_delete(message):
-    if message.author.bot:
-        return
-    log_channel = message.guild.get_channel(SERVER_LOG_CHANNEL_ID)
-    if not log_channel:
-        return
-    embed = discord.Embed(title="🗑️ Сообщение удалено", color=0xe74c3c, timestamp=datetime.datetime.now())
-    embed.add_field(name="Автор", value=message.author.mention)
-    embed.add_field(name="Канал", value=message.channel.mention)
-    if message.content:
-        embed.add_field(name="Содержание", value=message.content[:1024], inline=False)
-    else:
-        embed.add_field(name="Содержание", value="*Вложение*", inline=False)
-    await log_channel.send(embed=embed)
-
-@bot.event
-async def on_member_ban(guild, user):
-    log_channel = guild.get_channel(SERVER_LOG_CHANNEL_ID)
-    if log_channel:
-        embed = discord.Embed(title="🔨 Бан участника", color=0xe74c3c, timestamp=datetime.datetime.now())
-        embed.add_field(name="Пользователь", value=user.mention)
-        embed.add_field(name="ID", value=user.id)
-        await log_channel.send(embed=embed)
-
-@bot.event
-async def on_member_kick(guild, user):
-    log_channel = guild.get_channel(SERVER_LOG_CHANNEL_ID)
-    if log_channel:
-        embed = discord.Embed(title="🥾 Кик участника", color=0xe74c3c, timestamp=datetime.datetime.now())
-        embed.add_field(name="Пользователь", value=user.mention)
-        embed.add_field(name="ID", value=user.id)
         await log_channel.send(embed=embed)
 
 @bot.event
