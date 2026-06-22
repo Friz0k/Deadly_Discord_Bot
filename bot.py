@@ -367,6 +367,75 @@ async def on_ready():
     auto_remove_expired_discipline.start()
     contract_reminders.start()
 
+@bot.tree.command(name="хелп", description="Помощь по боту", guild=GUILD_ID)
+async def help_cmd(interaction: discord.Interaction):
+    embed = discord.Embed(title="✨ Помощь по боту", color=0x9b59b6)
+    embed.add_field(name="👥 Семья", value="/дсемья ID Ник — добавить\n/усемья ID — удалить\n/семья — список", inline=False)
+    embed.add_field(name="🚗 Авто", value="/давто Модель Госномер\n/уавто Госномер\n/авто — список\n/взавто Номер [часы]\n/веавто Номер", inline=False)
+    embed.add_field(name="📦 Склад", value="/склад [Категория]\n/псклад Предмет Категория Кол-во\n/всклад Предмет Кол-во", inline=False)
+    embed.add_field(name="💰 Банк", value="/банк — баланс\n/пополнить Сумма [Причина]\n/снять Сумма [Причина]", inline=False)
+    embed.add_field(name="📝 Контракты", value="/вк @Участники Название ДД.ММ.ГГГГ ЧЧ:ММ [векселя]", inline=False)
+    embed.add_field(name="⚠️ Дисциплина", value="/дв @Участники Тип Причина\n/выг [@Участник]\n/снятьдв @Участник Причина", inline=False)
+    embed.add_field(name="📋 Логи", value="/logs [@Участник]", inline=False)
+    embed.add_field(name="💾 Бекап", value="/backup\n/restore\n/reset_contracts", inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="backup", description="Сохранить базу данных", guild=GUILD_ID)
+@app_commands.checks.has_any_role(ASSISTANT_ROLE, SUPER_ADMIN_ROLE)
+async def backup_db(interaction: discord.Interaction):
+    if not os.path.exists(DB_PATH):
+        await interaction.response.send_message("❌ База данных не найдена.", ephemeral=True); return
+    file = discord.File(DB_PATH, filename="gta_rp.db")
+    await interaction.response.send_message("📦 Бекап базы данных:", file=file, ephemeral=True)
+
+@bot.tree.command(name="restore", description="Восстановить базу данных", guild=GUILD_ID)
+@app_commands.checks.has_any_role(ASSISTANT_ROLE, SUPER_ADMIN_ROLE)
+async def restore_db(interaction: discord.Interaction, файл: discord.Attachment):
+    if not файл.filename.endswith('.db'):
+        await interaction.response.send_message("❌ Файл должен иметь расширение .db.", ephemeral=True); return
+    if os.path.exists(DB_PATH):
+        os.rename(DB_PATH, DB_PATH + '.backup')
+    try:
+        await файл.save(DB_PATH)
+        global conn, c
+        conn.close()
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        update_all_nicknames.restart()
+        auto_remove_expired_discipline.restart()
+        contract_reminders.restart()
+        await interaction.response.send_message("✅ База данных восстановлена.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Ошибка восстановления: {e}", ephemeral=True)
+        if os.path.exists(DB_PATH + '.backup'):
+            os.rename(DB_PATH + '.backup', DB_PATH)
+
+@bot.tree.command(name="reset_contracts", description="Исправить таблицу контрактов", guild=GUILD_ID)
+@app_commands.checks.has_any_role(ASSISTANT_ROLE, SUPER_ADMIN_ROLE)
+async def reset_contracts(interaction: discord.Interaction):
+    c.execute("DROP TABLE IF EXISTS contracts")
+    c.execute('''CREATE TABLE contracts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        participants TEXT,
+        due_date TEXT,
+        bills INTEGER DEFAULT 0,
+        created_by TEXT,
+        created_at TEXT,
+        status TEXT DEFAULT 'создан',
+        message_id INTEGER,
+        notified_hours INTEGER DEFAULT 0,
+        started_at TEXT
+    )''')
+    conn.commit()
+    await interaction.response.send_message("✅ Таблица контрактов исправлена. Можете пользоваться `/вк`.", ephemeral=True)
+
+@bot.tree.command(name="id", description="Узнать Discord ID", guild=GUILD_ID)
+@app_commands.checks.has_any_role(RECRUITER_ROLE, SUPER_ADMIN_ROLE)
+async def get_id(interaction: discord.Interaction, пользователь: discord.Member = None):
+    member = пользователь or interaction.user
+    await interaction.response.send_message(f'🆔 {member.mention}: `{member.id}`', ephemeral=True)
+
 @bot.tree.command(name="дсемья", description="Добавить участника в семью", guild=GUILD_ID)
 @app_commands.checks.has_any_role(RECRUITER_ROLE, SUPER_ADMIN_ROLE)
 async def add_family(interaction: discord.Interaction, discord_id: str, никнейм: str):
