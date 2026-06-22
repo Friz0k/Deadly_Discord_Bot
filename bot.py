@@ -243,6 +243,40 @@ async def on_voice_state_update(member, before, after):
         await log_channel.send(embed=embed)
 
 @bot.event
+async def on_message_delete(message):
+    if message.author.bot:
+        return
+    log_channel = message.guild.get_channel(SERVER_LOG_CHANNEL_ID)
+    if not log_channel:
+        return
+    embed = discord.Embed(title="🗑️ Сообщение удалено", color=0xe74c3c, timestamp=datetime.datetime.now())
+    embed.add_field(name="Автор", value=message.author.mention)
+    embed.add_field(name="Канал", value=message.channel.mention)
+    if message.content:
+        embed.add_field(name="Содержание", value=message.content[:1024], inline=False)
+    else:
+        embed.add_field(name="Содержание", value="*Вложение*", inline=False)
+    await log_channel.send(embed=embed)
+
+@bot.event
+async def on_member_ban(guild, user):
+    log_channel = guild.get_channel(SERVER_LOG_CHANNEL_ID)
+    if log_channel:
+        embed = discord.Embed(title="🔨 Бан участника", color=0xe74c3c, timestamp=datetime.datetime.now())
+        embed.add_field(name="Пользователь", value=user.mention)
+        embed.add_field(name="ID", value=user.id)
+        await log_channel.send(embed=embed)
+
+@bot.event
+async def on_member_kick(guild, user):
+    log_channel = guild.get_channel(SERVER_LOG_CHANNEL_ID)
+    if log_channel:
+        embed = discord.Embed(title="🥾 Кик участника", color=0xe74c3c, timestamp=datetime.datetime.now())
+        embed.add_field(name="Пользователь", value=user.mention)
+        embed.add_field(name="ID", value=user.id)
+        await log_channel.send(embed=embed)
+
+@bot.event
 async def on_message(message):
     if message.author.bot: return
     content = message.content.lower()
