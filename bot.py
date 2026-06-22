@@ -221,39 +221,25 @@ async def on_member_update(before, after):
             log_action(after.id, after.display_name, "Авто-удаление из семьи", f"Роль {role.name} снята")
 
 @bot.event
-async def on_guild_channel_create(channel):
-    log_channel = channel.guild.get_channel(SERVER_LOG_CHANNEL_ID)
-    if log_channel:
-        embed = discord.Embed(title="➕ Создан канал", color=0x2ecc71, timestamp=datetime.datetime.now())
-        embed.add_field(name="Название", value=channel.name)
-        embed.add_field(name="Тип", value=str(channel.type))
-        await log_channel.send(embed=embed)
-
-@bot.event
-async def on_guild_channel_delete(channel):
-    log_channel = channel.guild.get_channel(SERVER_LOG_CHANNEL_ID)
-    if log_channel:
-        embed = discord.Embed(title="➖ Удалён канал", color=0xe74c3c, timestamp=datetime.datetime.now())
-        embed.add_field(name="Название", value=channel.name)
-        embed.add_field(name="Тип", value=str(channel.type))
-        await log_channel.send(embed=embed)
-
-@bot.event
-async def on_member_join(member):
-    log_channel = member.guild.get_channel(SERVER_LOG_CHANNEL_ID)
-    if log_channel:
-        embed = discord.Embed(title="📥 Участник зашёл", color=0x2ecc71, timestamp=datetime.datetime.now())
+async def on_voice_state_update(member, before, after):
+    log_channel = member.guild.get_channel(SERVER_LOG_CHANNEL_ID) if member.guild else None
+    if not log_channel or member.bot:
+        return
+    if before.channel is None and after.channel is not None:
+        embed = discord.Embed(title="🔊 Зашёл в голосовой канал", color=0x2ecc71, timestamp=datetime.datetime.now())
         embed.add_field(name="Пользователь", value=member.mention)
-        embed.add_field(name="ID", value=member.id)
+        embed.add_field(name="Канал", value=after.channel.name)
         await log_channel.send(embed=embed)
-
-@bot.event
-async def on_member_remove(member):
-    log_channel = member.guild.get_channel(SERVER_LOG_CHANNEL_ID)
-    if log_channel:
-        embed = discord.Embed(title="📤 Участник вышел", color=0xe74c3c, timestamp=datetime.datetime.now())
+    elif before.channel is not None and after.channel is None:
+        embed = discord.Embed(title="🔇 Вышел из голосового канала", color=0xe74c3c, timestamp=datetime.datetime.now())
         embed.add_field(name="Пользователь", value=member.mention)
-        embed.add_field(name="ID", value=member.id)
+        embed.add_field(name="Канал", value=before.channel.name)
+        await log_channel.send(embed=embed)
+    elif before.channel != after.channel:
+        embed = discord.Embed(title="🔄 Переместился в голосовой канал", color=0x3498db, timestamp=datetime.datetime.now())
+        embed.add_field(name="Пользователь", value=member.mention)
+        embed.add_field(name="Из", value=before.channel.name)
+        embed.add_field(name="В", value=after.channel.name)
         await log_channel.send(embed=embed)
 
 @bot.event
