@@ -6,8 +6,7 @@
 <h3 align="center">Автоматизация и учёт для Discord</h3>
 
 <p align="center">
-  <em>Создан для семьи <strong>Deadly</strong> на сервере <strong>GTA5RP Eclipse</strong><br>
-  и готов помогать любому ролевому сообществу.</em>
+  <em>Создан для семьи <strong>Deadly</strong> на сервере <strong>GTA5RP Eclipse</strong><br>.</em>
 </p>
 
 <p align="center">
