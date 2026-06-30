@@ -703,7 +703,7 @@ async def bank_add(interaction: discord.Interaction, сумма: int, причи
     conn.commit()
     new_balance = get_family_balance()
     log_action(interaction.user.id, nick, "Пополнение банка", f"+{сумма}, причина: {причина}")
-    await interaction.response.send_message(f'💰 Счёт семьи пополнен на {сумма} (от {nick}). Баланс: {new_balance}.', ephemeral=True)
+    await interaction.response.send_message(f'💰 Счёт семьи пополнен на {сумма} (от {nick}). Баланс: {new_balance}.')
 
 @bot.tree.command(name="снять", description="Снять деньги из семейного банка", guild=GUILD_ID)
 @app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
