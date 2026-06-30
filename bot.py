@@ -184,83 +184,46 @@ async def update_discipline_roles(member, nickname):
     if role: await member.add_roles(role, reason=f"Выговоры: {new_vygs}")
 
 @bot.event
-async def on_audit_log_entry_create(entry):
-    log_channel = entry.guild.get_channel(SERVER_LOG_CHANNEL_ID)
-    if not log_channel:
-        return
-    user = entry.user.mention if entry.user else "Неизвестно"
-    target = entry.target.mention if entry.target else "Неизвестно"
-    action = entry.action
-    reason = entry.reason or "Не указана"
-
-    if action == discord.AuditLogAction.member_role_update:
-        embed = discord.Embed(title="🔄 Изменение ролей", color=0x3498db, timestamp=datetime.datetime.now())
-        embed.add_field(name="Инициатор", value=user)
-        embed.add_field(name="Пользователь", value=target)
-        if entry.before.roles != entry.after.roles:
-            added = [role.mention for role in entry.after.roles if role not in entry.before.roles]
-            removed = [role.mention for role in entry.before.roles if role not in entry.after.roles]
-            if added: embed.add_field(name="➕ Выданы роли", value=", ".join(added) or "Нет", inline=False)
-            if removed: embed.add_field(name="➖ Сняты роли", value=", ".join(removed) or "Нет", inline=False)
-        await log_channel.send(embed=embed)
-
-    elif action == discord.AuditLogAction.kick:
-        embed = discord.Embed(title="🥾 Кик участника", color=0xe74c3c, timestamp=datetime.datetime.now())
-        embed.add_field(name="Инициатор", value=user)
-        embed.add_field(name="Пользователь", value=target)
-        embed.add_field(name="Причина", value=reason, inline=False)
-        await log_channel.send(embed=embed)
-
-    elif action == discord.AuditLogAction.ban:
-        embed = discord.Embed(title="🔨 Бан участника", color=0xe74c3c, timestamp=datetime.datetime.now())
-        embed.add_field(name="Инициатор", value=user)
-        embed.add_field(name="Пользователь", value=target)
-        embed.add_field(name="Причина", value=reason, inline=False)
-        await log_channel.send(embed=embed)
-
-    elif action == discord.AuditLogAction.unban:
-        embed = discord.Embed(title="✅ Разбан участника", color=0x2ecc71, timestamp=datetime.datetime.now())
-        embed.add_field(name="Инициатор", value=user)
-        embed.add_field(name="Пользователь", value=target)
-        await log_channel.send(embed=embed)
-
-    elif action == discord.AuditLogAction.member_update:
-        if entry.before.nick != entry.after.nick:
+async def on_member_update(before, after):
+    log_channel = after.guild.get_channel(SERVER_LOG_CHANNEL_ID) if after.guild else None
+    if log_channel and not after.bot:
+        if before.nick != after.nick:
             embed = discord.Embed(title="🔄 Смена ника", color=0x3498db, timestamp=datetime.datetime.now())
-            embed.add_field(name="Инициатор", value=user)
-            embed.add_field(name="Пользователь", value=target)
-            embed.add_field(name="Было", value=entry.before.nick or entry.before.name)
-            embed.add_field(name="Стало", value=entry.after.nick or entry.after.name)
+            embed.add_field(name="Пользователь", value=after.mention)
+            embed.add_field(name="Было", value=before.nick or before.name)
+            embed.add_field(name="Стало", value=after.nick or after.name)
             await log_channel.send(embed=embed)
-
-    elif action == discord.AuditLogAction.message_delete:
-        embed = discord.Embed(title="🗑️ Сообщение удалено", color=0xe74c3c, timestamp=datetime.datetime.now())
-        embed.add_field(name="Инициатор", value=user)
-        embed.add_field(name="Автор сообщения", value=target)
-        embed.add_field(name="Канал", value=entry.extra.channel.mention if entry.extra and entry.extra.channel else "Неизвестно")
-        if hasattr(entry, 'before') and hasattr(entry.before, 'content'):
-            embed.add_field(name="Содержание", value=entry.before.content[:1024] or "Нет текста", inline=False)
-        await log_channel.send(embed=embed)
-
-    elif action in [discord.AuditLogAction.channel_create, discord.AuditLogAction.channel_delete, discord.AuditLogAction.channel_update]:
-        channel = entry.target.mention if entry.target else "Неизвестно"
-        embed = discord.Embed(title=f"{'➕ Создан' if action == discord.AuditLogAction.channel_create else '➖ Удалён' if action == discord.AuditLogAction.channel_delete else '🔄 Изменён'} канал",
-                              color=0x3498db, timestamp=datetime.datetime.now())
-        embed.add_field(name="Инициатор", value=user)
-        embed.add_field(name="Канал", value=channel)
-        await log_channel.send(embed=embed)
-
-    elif action == discord.AuditLogAction.overwrite_create:
-        embed = discord.Embed(title="🔒 Изменены права канала", color=0x3498db, timestamp=datetime.datetime.now())
-        embed.add_field(name="Инициатор", value=user)
-        embed.add_field(name="Канал", value=entry.target.mention if entry.target else "Неизвестно")
-        await log_channel.send(embed=embed)
+        added = [role for role in after.roles if role not in before.roles]
+        removed = [role for role in before.roles if role not in after.roles]
+        if added or removed:
+            desc = f"**Пользователь:** {after.mention} ({after.id})\n"
+            if added: desc += "➕ **Выданы роли:** " + ", ".join(role.mention for role in added) + "\n"
+            if removed: desc += "➖ **Сняты роли:** " + ", ".join(role.mention for role in removed) + "\n"
+            embed = discord.Embed(title="🔄 Изменение ролей", description=desc, color=0x3498db, timestamp=datetime.datetime.now())
+            await log_channel.send(embed=embed)
+    role = after.guild.get_role(ROLE_FAMILY_AUTO) if after.guild else None
+    if not role: return
+    had_role = role in before.roles
+    has_role = role in after.roles
+    if not had_role and has_role:
+        c.execute("SELECT 1 FROM family_members WHERE discord_id=?", (after.id,))
+        if c.fetchone() is None:
+            nick = after.display_name.replace(" ", "_")
+            try:
+                c.execute("INSERT INTO family_members (nickname, discord_id, joined_at) VALUES (?, ?, ?)", (nick, after.id, datetime.datetime.now().isoformat()))
+                conn.commit()
+                log_action(after.id, nick, "Авто-добавление в семью", f"Роль {role.name}")
+            except: pass
+    elif had_role and not has_role:
+        c.execute("DELETE FROM family_members WHERE discord_id=?", (after.id,))
+        if c.rowcount > 0:
+            conn.commit()
+            log_action(after.id, after.display_name, "Авто-удаление из семьи", f"Роль {role.name} снята")
 
 @bot.event
 async def on_voice_state_update(member, before, after):
     log_channel = member.guild.get_channel(SERVER_LOG_CHANNEL_ID) if member.guild else None
-    if not log_channel or member.bot:
-        return
+    if not log_channel or member.bot: return
     if before.channel is None and after.channel is not None:
         embed = discord.Embed(title="🔊 Зашёл в голосовой канал", color=0x2ecc71, timestamp=datetime.datetime.now())
         embed.add_field(name="Пользователь", value=member.mention)
@@ -276,6 +239,35 @@ async def on_voice_state_update(member, before, after):
         embed.add_field(name="Пользователь", value=member.mention)
         embed.add_field(name="Из", value=before.channel.name)
         embed.add_field(name="В", value=after.channel.name)
+        await log_channel.send(embed=embed)
+
+@bot.event
+async def on_message_delete(message):
+    if message.author.bot: return
+    log_channel = message.guild.get_channel(SERVER_LOG_CHANNEL_ID)
+    if not log_channel: return
+    embed = discord.Embed(title="🗑️ Сообщение удалено", color=0xe74c3c, timestamp=datetime.datetime.now())
+    embed.add_field(name="Автор", value=message.author.mention)
+    embed.add_field(name="Канал", value=message.channel.mention)
+    embed.add_field(name="Содержание", value=message.content[:1024] if message.content else "*Вложение*", inline=False)
+    await log_channel.send(embed=embed)
+
+@bot.event
+async def on_member_ban(guild, user):
+    log_channel = guild.get_channel(SERVER_LOG_CHANNEL_ID)
+    if log_channel:
+        embed = discord.Embed(title="🔨 Бан участника", color=0xe74c3c, timestamp=datetime.datetime.now())
+        embed.add_field(name="Пользователь", value=user.mention)
+        embed.add_field(name="ID", value=user.id)
+        await log_channel.send(embed=embed)
+
+@bot.event
+async def on_member_kick(guild, user):
+    log_channel = guild.get_channel(SERVER_LOG_CHANNEL_ID)
+    if log_channel:
+        embed = discord.Embed(title="🥾 Кик участника", color=0xe74c3c, timestamp=datetime.datetime.now())
+        embed.add_field(name="Пользователь", value=user.mention)
+        embed.add_field(name="ID", value=user.id)
         await log_channel.send(embed=embed)
 
 @bot.event
@@ -389,13 +381,16 @@ async def on_ready():
     auto_remove_expired_discipline.start()
     contract_reminders.start()
 
+def has_role(ctx, *role_names):
+    return any(role.name.lower() in [name.lower() for name in role_names] for role in ctx.author.roles)
+
 @bot.tree.command(name="хелп", description="Помощь по боту", guild=GUILD_ID)
 async def help_cmd(interaction: discord.Interaction):
     embed = discord.Embed(title="✨ Помощь по боту", color=0x9b59b6)
     embed.add_field(name="👥 Семья", value="/дсемья ID Ник — добавить\n/усемья ID — удалить\n/семья", inline=False)
     embed.add_field(name="🚗 Авто", value="/давто Модель Госномер\n/уавто Госномер\n/авто — список\n/взавто Номер [часы]\n/веавто Номер", inline=False)
     embed.add_field(name="📦 Склад", value="/склад [Категория]\n/псклад Предмет Категория Кол-во\n/всклад Предмет Кол-во", inline=False)
-    embed.add_field(name="💰 Банк", value="/банк — баланс\n/пополнить Сумма [Причина]\n/снять Сумма [Причина]", inline=False)
+    embed.add_field(name="💰 Банк", value="/банк — баланс\n/пополнить Сумма [Причина] (скриншот обязателен)\n/снять Сумма [Причина]", inline=False)
     embed.add_field(name="📝 Контракты", value="/вк @Участники Название ДД.ММ.ГГГГ ЧЧ:ММ [векселя]", inline=False)
     embed.add_field(name="⚠️ Дисциплина", value="/дв @Участники Тип Причина\n/выг [@Участник]\n/снятьдв @Участник Причина", inline=False)
     embed.add_field(name="📋 Логи", value="/logs [@Участник]", inline=False)
@@ -690,38 +685,43 @@ async def bank_balance(interaction: discord.Interaction):
     balance = get_family_balance()
     await interaction.response.send_message(f'💰 Баланс семьи: {balance}')
 
-@bot.tree.command(name="пополнить", description="Пополнить семейный банк", guild=GUILD_ID)
+@bot.tree.command(name="пополнить", description="Пополнить семейный банк (обязательно прикрепите скриншот)", guild=GUILD_ID)
 @app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
-async def bank_add(interaction: discord.Interaction, сумма: int, причина: str = ""):
+async def bank_add(interaction: discord.Interaction, сумма: int, причина: str = "", скриншот: discord.Attachment = None):
+    if скриншот is None:
+        await interaction.response.send_message("❌ Необходимо прикрепить скриншот.", ephemeral=True)
+        return
     if сумма <= 0:
-        await interaction.response.send_message('❌ Сумма должна быть положительной.'); return
+        await interaction.response.send_message("❌ Сумма должна быть положительной.", ephemeral=True)
+        return
     nick = get_member_nick(interaction.user.id)
     if not nick:
-        await interaction.response.send_message('❌ Вы не привязаны к семье. Используйте /дсемья.'); return
+        await interaction.response.send_message("❌ Вы не привязаны к семье. Используйте /дсемья.", ephemeral=True)
+        return
     nick = nick.replace("_", " ")
     c.execute("UPDATE bank SET balance = balance + ?", (сумма,))
     conn.commit()
     new_balance = get_family_balance()
     log_action(interaction.user.id, nick, "Пополнение банка", f"+{сумма}, причина: {причина}")
-    await interaction.response.send_message(f'💰 Счёт семьи пополнен на {сумма} (от {nick}). Баланс: {new_balance}.')
+    await interaction.response.send_message(f'💰 Счёт семьи пополнен на {сумма} (от {nick}). Баланс: {new_balance}.', ephemeral=True)
 
 @bot.tree.command(name="снять", description="Снять деньги из семейного банка", guild=GUILD_ID)
 @app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
 async def bank_remove(interaction: discord.Interaction, сумма: int, причина: str = ""):
     if сумма <= 0:
-        await interaction.response.send_message('❌ Сумма должна быть положительной.'); return
+        await interaction.response.send_message("❌ Сумма должна быть положительной."); return
     nick = get_member_nick(interaction.user.id)
     if not nick:
-        await interaction.response.send_message('❌ Вы не привязаны к семье. Используйте /дсемья.'); return
+        await interaction.response.send_message("❌ Вы не привязаны к семье. Используйте /дсемья."); return
     nick = nick.replace("_", " ")
     balance = get_family_balance()
     if balance < сумма:
-        await interaction.response.send_message(f'❌ Недостаточно средств. Баланс: {balance}.'); return
+        await interaction.response.send_message(f"❌ Недостаточно средств. Баланс: {balance}."); return
     c.execute("UPDATE bank SET balance = balance - ?", (сумма,))
     conn.commit()
     new_balance = get_family_balance()
     log_action(interaction.user.id, nick, "Снятие с банка", f"-{сумма}, причина: {причина}")
-    await interaction.response.send_message(f'💸 Из бюджета семьи снято {сумма} (от {nick}). Баланс: {new_balance}.')
+    await interaction.response.send_message(f"💸 Из бюджета семьи снято {сумма} (от {nick}). Баланс: {new_balance}.")
 
 @bot.tree.command(name="вк", description="Взять контракт", guild=GUILD_ID)
 @app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
@@ -862,6 +862,81 @@ async def show_logs(interaction: discord.Interaction, участник: str = No
     lines = [f'**{nick}** – {action}\n{details} | {ts}' for nick, action, details, ts in rows]
     embed = discord.Embed(title="📋 Логи", description='\n'.join(lines), color=0x3498db)
     await interaction.response.send_message(embed=embed)
+
+@bot.command(name="банк")
+@commands.check(lambda ctx: has_role(ctx, ASSISTANT_ROLE, SUPER_ADMIN_ROLE))
+async def bank_balance_txt(ctx):
+    balance = get_family_balance()
+    await ctx.send(f'💰 Баланс семьи: {balance}')
+
+@bot.command(name="пополнить")
+@commands.check(lambda ctx: has_role(ctx, DEADLY_ROLE, SUPER_ADMIN_ROLE))
+async def bank_add_txt(ctx, amount: int, *, reason=""):
+    if not ctx.message.attachments:
+        return await ctx.send("❌ Необходимо прикрепить скриншот.", delete_after=10)
+    if amount <= 0:
+        return await ctx.send("❌ Сумма должна быть положительной.", delete_after=10)
+    nick = get_member_nick(ctx.author.id)
+    if not nick:
+        return await ctx.send("❌ Вы не привязаны к семье. Используйте !добавсемья.", delete_after=10)
+    nick = nick.replace("_", " ")
+    c.execute("UPDATE bank SET balance = balance + ?", (amount,))
+    conn.commit()
+    new_balance = get_family_balance()
+    log_action(ctx.author.id, nick, "Пополнение банка", f"+{amount}, причина: {reason}")
+    await ctx.send(f"💰 Счёт семьи пополнен на {amount} (от {nick}). Баланс: {new_balance}.")
+
+@bot.command(name="снять")
+@commands.check(lambda ctx: has_role(ctx, DEADLY_ROLE, SUPER_ADMIN_ROLE))
+async def bank_remove_txt(ctx, amount: int, *, reason=""):
+    if amount <= 0:
+        return await ctx.send("❌ Сумма должна быть положительной.", delete_after=10)
+    nick = get_member_nick(ctx.author.id)
+    if not nick:
+        return await ctx.send("❌ Вы не привязаны к семье. Используйте !добавсемья.", delete_after=10)
+    nick = nick.replace("_", " ")
+    balance = get_family_balance()
+    if balance < amount:
+        return await ctx.send(f"❌ Недостаточно средств. Баланс: {balance}.", delete_after=10)
+    c.execute("UPDATE bank SET balance = balance - ?", (amount,))
+    conn.commit()
+    new_balance = get_family_balance()
+    log_action(ctx.author.id, nick, "Снятие с банка", f"-{amount}, причина: {reason}")
+    await ctx.send(f"💸 Из бюджета семьи снято {amount} (от {nick}). Баланс: {new_balance}.")
+
+@bot.command(name="дв")
+@commands.check(lambda ctx: has_role(ctx, DISCIPLINE_ROLE, SUPER_ADMIN_ROLE))
+async def dv_add_txt(ctx, members: commands.Greedy[discord.Member], action_type: str, *, reason: str):
+    action_type = action_type.lower()
+    allowed = ["предупреждение", "выговор", "2выговора", "warn", "увал"]
+    if action_type not in allowed:
+        return await ctx.send(f'❌ Неверный тип. Допустимые: {", ".join(allowed)}', delete_after=10)
+    vacation_role = ctx.guild.get_role(ROLE_VACATION_ID)
+    blocked = [m.display_name for m in members if vacation_role and vacation_role in m.roles]
+    if blocked:
+        return await ctx.send(f"❌ Нельзя выдать ДВ следующим участникам (Отпуск): {', '.join(blocked)}", delete_after=10)
+    issuer_nick = get_member_nick(ctx.author.id) or str(ctx.author)
+    for m in members:
+        nickname = m.display_name.replace(" ", "_")
+        c.execute("INSERT INTO disciplinary_actions (nickname, discord_id, action_type, reason, issued_by, date) VALUES (?,?,?,?,?,?)",
+                  (nickname, m.id, action_type, reason, str(ctx.author), datetime.datetime.now().isoformat()))
+        conn.commit()
+        await update_discipline_roles(m, nickname)
+        log_action(ctx.author.id, issuer_nick, "Выдача ДВ", f"{nickname}: {action_type}, причина: {reason}")
+    mentions = ', '.join(m.mention for m in members)
+    await ctx.send(f'⚠️ {mentions} получили **{action_type}**.\nПричина: {reason}\nВыдал: {ctx.author.mention}')
+
+@bot.command(name="помощь")
+async def help_txt(ctx):
+    msg = "✨ **Помощь по боту**\n"
+    msg += "👥 **Семья:** !дсемья ID Ник, !усемья ID, !семья\n"
+    msg += "🚗 **Авто:** !давто Модель Госномер, !уавто Госномер, !авто, !взавто Номер [часы], !веавто Номер\n"
+    msg += "📦 **Склад:** !склад [Категория], !псклад Предмет Категория Кол-во, !всклад Предмет Кол-во\n"
+    msg += "💰 **Банк:** !банк, !пополнить Сумма [Причина] (скриншот обязателен), !снять Сумма [Причина]\n"
+    msg += "⚠️ **Дисциплина:** !дв @Участники Тип Причина, !выг [@Участник], !снятьдв @Участник Причина\n"
+    msg += "📋 **Логи:** !logs [@Участник]\n"
+    msg += "💾 **Бекап:** !backup, !restore, !reset_contracts"
+    await ctx.send(msg)
 
 app = Flask(__name__)
 
