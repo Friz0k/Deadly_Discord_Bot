@@ -893,6 +893,7 @@ async def show_logs(interaction: discord.Interaction, участник: str = No
     embed = discord.Embed(title="📋 Логи", description='\n'.join(lines), color=0x3498db)
     await interaction.response.send_message(embed=embed)
 
+# ------------------- МИНИ-ИГРЫ -------------------
 class SnakeGame:
     def __init__(self):
         self.board_size = 8
@@ -999,8 +1000,10 @@ class GameView(View):
 class SnakeView(GameView):
     def __init__(self, game, user_id):
         super().__init__(game, user_id, "змейка")
-        for emoji in ['⬆️','⬇️','⬅️','➡️']:
-            self.add_item(Button(emoji=emoji, style=discord.ButtonStyle.secondary, custom_id=emoji))
+        self.add_item(Button(emoji='⬆️', style=discord.ButtonStyle.secondary, custom_id='up'))
+        self.add_item(Button(emoji='⬇️', style=discord.ButtonStyle.secondary, custom_id='down'))
+        self.add_item(Button(emoji='⬅️', style=discord.ButtonStyle.secondary, custom_id='left'))
+        self.add_item(Button(emoji='➡️', style=discord.ButtonStyle.secondary, custom_id='right'))
 
     async def update_game(self, interaction):
         self.game.move()
@@ -1012,25 +1015,25 @@ class SnakeView(GameView):
                 child.disabled = True
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(custom_id='⬆️')
+    @discord.ui.button(custom_id='up')
     async def up(self, interaction: discord.Interaction, button: Button):
         if self.game.direction != (1,0):
             self.game.direction = (-1,0)
         await self.update_game(interaction)
 
-    @discord.ui.button(custom_id='⬇️')
+    @discord.ui.button(custom_id='down')
     async def down(self, interaction: discord.Interaction, button: Button):
         if self.game.direction != (-1,0):
             self.game.direction = (1,0)
         await self.update_game(interaction)
 
-    @discord.ui.button(custom_id='⬅️')
+    @discord.ui.button(custom_id='left')
     async def left(self, interaction: discord.Interaction, button: Button):
         if self.game.direction != (0,1):
             self.game.direction = (0,-1)
         await self.update_game(interaction)
 
-    @discord.ui.button(custom_id='➡️')
+    @discord.ui.button(custom_id='right')
     async def right(self, interaction: discord.Interaction, button: Button):
         if self.game.direction != (0,-1):
             self.game.direction = (0,1)
@@ -1039,10 +1042,6 @@ class SnakeView(GameView):
 class MinesweeperView(GameView):
     def __init__(self, game, user_id):
         super().__init__(game, user_id, "сапёр")
-        for i in range(25):
-            x = i % 5
-            y = i // 5
-            self.add_item(Button(label='\u200b', style=discord.ButtonStyle.secondary, row=y, custom_id=str(i)))
 
     async def update(self, interaction, x, y):
         result = self.game.reveal(x, y)
@@ -1053,55 +1052,59 @@ class MinesweeperView(GameView):
                 child.disabled = True
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(custom_id='0')
+    @discord.ui.button(custom_id='0', row=0)
     async def btn0(self, interaction, button): await self.update(interaction, 0, 0)
-    @discord.ui.button(custom_id='1')
+    @discord.ui.button(custom_id='1', row=0)
     async def btn1(self, interaction, button): await self.update(interaction, 1, 0)
-    @discord.ui.button(custom_id='2')
+    @discord.ui.button(custom_id='2', row=0)
     async def btn2(self, interaction, button): await self.update(interaction, 2, 0)
-    @discord.ui.button(custom_id='3')
+    @discord.ui.button(custom_id='3', row=0)
     async def btn3(self, interaction, button): await self.update(interaction, 3, 0)
-    @discord.ui.button(custom_id='4')
+    @discord.ui.button(custom_id='4', row=0)
     async def btn4(self, interaction, button): await self.update(interaction, 4, 0)
-    @discord.ui.button(custom_id='5')
+
+    @discord.ui.button(custom_id='5', row=1)
     async def btn5(self, interaction, button): await self.update(interaction, 0, 1)
-    @discord.ui.button(custom_id='6')
+    @discord.ui.button(custom_id='6', row=1)
     async def btn6(self, interaction, button): await self.update(interaction, 1, 1)
-    @discord.ui.button(custom_id='7')
+    @discord.ui.button(custom_id='7', row=1)
     async def btn7(self, interaction, button): await self.update(interaction, 2, 1)
-    @discord.ui.button(custom_id='8')
+    @discord.ui.button(custom_id='8', row=1)
     async def btn8(self, interaction, button): await self.update(interaction, 3, 1)
-    @discord.ui.button(custom_id='9')
+    @discord.ui.button(custom_id='9', row=1)
     async def btn9(self, interaction, button): await self.update(interaction, 4, 1)
-    @discord.ui.button(custom_id='10')
+
+    @discord.ui.button(custom_id='10', row=2)
     async def btn10(self, interaction, button): await self.update(interaction, 0, 2)
-    @discord.ui.button(custom_id='11')
+    @discord.ui.button(custom_id='11', row=2)
     async def btn11(self, interaction, button): await self.update(interaction, 1, 2)
-    @discord.ui.button(custom_id='12')
+    @discord.ui.button(custom_id='12', row=2)
     async def btn12(self, interaction, button): await self.update(interaction, 2, 2)
-    @discord.ui.button(custom_id='13')
+    @discord.ui.button(custom_id='13', row=2)
     async def btn13(self, interaction, button): await self.update(interaction, 3, 2)
-    @discord.ui.button(custom_id='14')
+    @discord.ui.button(custom_id='14', row=2)
     async def btn14(self, interaction, button): await self.update(interaction, 4, 2)
-    @discord.ui.button(custom_id='15')
+
+    @discord.ui.button(custom_id='15', row=3)
     async def btn15(self, interaction, button): await self.update(interaction, 0, 3)
-    @discord.ui.button(custom_id='16')
+    @discord.ui.button(custom_id='16', row=3)
     async def btn16(self, interaction, button): await self.update(interaction, 1, 3)
-    @discord.ui.button(custom_id='17')
+    @discord.ui.button(custom_id='17', row=3)
     async def btn17(self, interaction, button): await self.update(interaction, 2, 3)
-    @discord.ui.button(custom_id='18')
+    @discord.ui.button(custom_id='18', row=3)
     async def btn18(self, interaction, button): await self.update(interaction, 3, 3)
-    @discord.ui.button(custom_id='19')
+    @discord.ui.button(custom_id='19', row=3)
     async def btn19(self, interaction, button): await self.update(interaction, 4, 3)
-    @discord.ui.button(custom_id='20')
+
+    @discord.ui.button(custom_id='20', row=4)
     async def btn20(self, interaction, button): await self.update(interaction, 0, 4)
-    @discord.ui.button(custom_id='21')
+    @discord.ui.button(custom_id='21', row=4)
     async def btn21(self, interaction, button): await self.update(interaction, 1, 4)
-    @discord.ui.button(custom_id='22')
+    @discord.ui.button(custom_id='22', row=4)
     async def btn22(self, interaction, button): await self.update(interaction, 2, 4)
-    @discord.ui.button(custom_id='23')
+    @discord.ui.button(custom_id='23', row=4)
     async def btn23(self, interaction, button): await self.update(interaction, 3, 4)
-    @discord.ui.button(custom_id='24')
+    @discord.ui.button(custom_id='24', row=4)
     async def btn24(self, interaction, button): await self.update(interaction, 4, 4)
 
 @bot.tree.command(name="игра", description="Запустить мини-игру", guild=GUILD_ID)
@@ -1113,19 +1116,22 @@ async def start_game(interaction: discord.Interaction, игра: str):
     if interaction.user.id in games:
         await interaction.response.send_message("У вас уже есть активная игра!", ephemeral=True)
         return
-    if игра == "змейка":
-        game = SnakeGame()
-        view = SnakeView(game, interaction.user.id)
-        embed = discord.Embed(title="🐍 Змейка", description=game.render(), color=0x2ecc71)
-        embed.set_footer(text="Счёт: 0")
-        await interaction.response.send_message(embed=embed, view=view)
-        games[interaction.user.id] = game
-    elif игра == "сапёр":
-        game = MinesweeperGame()
-        view = MinesweeperView(game, interaction.user.id)
-        embed = discord.Embed(title="💣 Сапёр", description=game.render(), color=0x3498db)
-        await interaction.response.send_message(embed=embed, view=view)
-        games[interaction.user.id] = game
+    try:
+        if игра == "змейка":
+            game = SnakeGame()
+            view = SnakeView(game, interaction.user.id)
+            embed = discord.Embed(title="🐍 Змейка", description=game.render(), color=0x2ecc71)
+            embed.set_footer(text="Счёт: 0")
+            await interaction.response.send_message(embed=embed, view=view)
+            games[interaction.user.id] = game
+        elif игра == "сапёр":
+            game = MinesweeperGame()
+            view = MinesweeperView(game, interaction.user.id)
+            embed = discord.Embed(title="💣 Сапёр", description=game.render(), color=0x3498db)
+            await interaction.response.send_message(embed=embed, view=view)
+            games[interaction.user.id] = game
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Ошибка при запуске игры: {e}", ephemeral=True)
 
 @bot.command(name="банк")
 @commands.check(lambda ctx: has_role(ctx, ASSISTANT_ROLE, SUPER_ADMIN_ROLE))
