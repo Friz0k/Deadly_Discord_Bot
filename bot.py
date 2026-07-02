@@ -6,7 +6,7 @@ import datetime
 import io
 import os
 import re
-from better_profanity import profanity
+from rus_must import must_filter
 from flask import Flask
 from threading import Thread
 
@@ -273,7 +273,7 @@ async def on_member_kick(guild, user):
 @bot.event
 async def on_message(message):
     if message.author.bot: return
-    if profanity.contains_profanity(message.content):
+    if must_filter.contains_mat(message.content):
         await message.delete()
         await message.channel.send(f"{message.author.mention}, ваше сообщение удалено за использование запрещённого слова.", delete_after=10)
         log_channel = message.guild.get_channel(SERVER_LOG_CHANNEL_ID)
@@ -559,8 +559,7 @@ async def take_car(interaction: discord.Interaction, номер: int, часы: 
     conn.commit()
     log_action(interaction.user.id, nick, "Взять авто", f"Номер {номер}, на {часы} ч")
     await interaction.response.send_message(f'✅ `{plate}` выдано `{nick}` на {часы} ч до {return_at.strftime("%d.%m.%Y %H:%M")}.')
-
-@bot.tree.command(name="веавто", description="Вернуть автомобиль", guild=GUILD_ID)
+    @bot.tree.command(name="веавто", description="Вернуть автомобиль", guild=GUILD_ID)
 @app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
 async def return_car(interaction: discord.Interaction, номер: int):
     c.execute("SELECT plate, status FROM vehicles WHERE id=?", (номер,))
@@ -700,9 +699,10 @@ async def bank_add(interaction: discord.Interaction, сумма: int, причи
     conn.commit()
     new_balance = get_family_balance()
     log_action(interaction.user.id, nick, "Пополнение банка", f"+{сумма}, причина: {причина}")
+    file = discord.File(await скриншот.read(), filename=скриншот.filename)
     await interaction.response.send_message(
         f'💰 Счёт семьи пополнен на {сумма} (от {nick}). Баланс: {new_balance}.',
-        file=await скриншот.to_file()
+        file=file
     )
 
 @bot.tree.command(name="снять", description="Снять деньги из семейного банка", guild=GUILD_ID)
@@ -884,9 +884,10 @@ async def bank_add_txt(ctx, amount: int, *, reason=""):
     conn.commit()
     new_balance = get_family_balance()
     log_action(ctx.author.id, nick, "Пополнение банка", f"+{amount}, причина: {reason}")
+    file = discord.File(await ctx.message.attachments[0].read(), filename=ctx.message.attachments[0].filename)
     await ctx.send(
         f"💰 Счёт семьи пополнен на {amount} (от {nick}). Баланс: {new_balance}.",
-        file=await ctx.message.attachments[0].to_file()
+        file=file
     )
 
 @bot.command(name="снять")
