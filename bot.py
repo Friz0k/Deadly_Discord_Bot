@@ -8,7 +8,7 @@ import io
 import os
 import re
 import random
-from rus_must import must_filter
+from better_profanity import profanity
 from flask import Flask
 from threading import Thread
 
@@ -35,6 +35,16 @@ ROLE_VACATION_ID = 1517727379198578739
 
 DISC_ROLES = [ROLE_PRED, ROLE_1VYG, ROLE_2VYG, ROLE_WARN]
 DB_PATH = 'gta_rp.db'
+
+BAD_WORDS = [
+    "сука", "блядь", "пиздец", "хуй", "пизда", "ебать",
+    "гандон", "мудак", "дебил", "идиот", "ублюдок",
+    "тварь", "мразь", "отморозок", "урод", "чмо", "лох",
+    "шлюха", "курва", "хер", "херня", "мудила", "говно",
+    "залупа", "жопа", "срать", "ссать", "пидор", "пидорас",
+    "долбоёб", "долбоеб", "член", "членосос", "минет",
+    "шлюх", "бля", "пизд", "ебал", "ебаный", "выебок"
+]
 
 conn = sqlite3.connect(DB_PATH)
 c = conn.cursor()
@@ -277,7 +287,8 @@ async def on_member_kick(guild, user):
 @bot.event
 async def on_message(message):
     if message.author.bot: return
-    if must_filter.contains_mat(message.content):
+    content = message.content.lower()
+    if profanity.contains_profanity(content):
         await message.delete()
         await message.channel.send(f"{message.author.mention}, ваше сообщение удалено за использование запрещённого слова.", delete_after=10)
         log_channel = message.guild.get_channel(SERVER_LOG_CHANNEL_ID)
@@ -287,6 +298,19 @@ async def on_message(message):
             embed.add_field(name="Канал", value=message.channel.mention)
             embed.add_field(name="Содержание", value=message.content[:500])
             await log_channel.send(embed=embed)
+        return
+    for word in BAD_WORDS:
+        if re.search(rf'\b{word}\b', content):
+            await message.delete()
+            await message.channel.send(f"{message.author.mention}, ваше сообщение удалено за использование запрещённого слова.", delete_after=10)
+            log_channel = message.guild.get_channel(SERVER_LOG_CHANNEL_ID)
+            if log_channel:
+                embed = discord.Embed(title="🚫 Модерация слов", color=0xe74c3c, timestamp=datetime.datetime.now())
+                embed.add_field(name="Пользователь", value=message.author.mention)
+                embed.add_field(name="Канал", value=message.channel.mention)
+                embed.add_field(name="Содержание", value=message.content[:500])
+                await log_channel.send(embed=embed)
+            break
     await bot.process_commands(message)
 
 @tasks.loop(minutes=10)
@@ -869,7 +893,6 @@ async def show_logs(interaction: discord.Interaction, участник: str = No
     embed = discord.Embed(title="📋 Логи", description='\n'.join(lines), color=0x3498db)
     await interaction.response.send_message(embed=embed)
 
-# ------------------- МИНИ-ИГРЫ -------------------
 class SnakeGame:
     def __init__(self):
         self.board_size = 8
