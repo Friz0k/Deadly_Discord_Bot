@@ -6,6 +6,7 @@ import datetime
 import io
 import os
 import re
+from better_profanity import profanity
 from flask import Flask
 from threading import Thread
 
@@ -32,7 +33,6 @@ ROLE_VACATION_ID = 1517727379198578739
 
 DISC_ROLES = [ROLE_PRED, ROLE_1VYG, ROLE_2VYG, ROLE_WARN]
 DB_PATH = 'gta_rp.db'
-BAD_WORDS = ["плохоеслово1", "плохоеслово2"]
 
 conn = sqlite3.connect(DB_PATH)
 c = conn.cursor()
@@ -273,19 +273,16 @@ async def on_member_kick(guild, user):
 @bot.event
 async def on_message(message):
     if message.author.bot: return
-    content = message.content.lower()
-    for word in BAD_WORDS:
-        if re.search(rf'\b{word}\b', content):
-            await message.delete()
-            await message.channel.send(f"{message.author.mention}, ваше сообщение удалено за использование запрещённого слова.", delete_after=10)
-            log_channel = message.guild.get_channel(SERVER_LOG_CHANNEL_ID)
-            if log_channel:
-                embed = discord.Embed(title="🚫 Модерация слов", color=0xe74c3c, timestamp=datetime.datetime.now())
-                embed.add_field(name="Пользователь", value=message.author.mention)
-                embed.add_field(name="Канал", value=message.channel.mention)
-                embed.add_field(name="Содержание", value=message.content[:500])
-                await log_channel.send(embed=embed)
-            break
+    if profanity.contains_profanity(message.content):
+        await message.delete()
+        await message.channel.send(f"{message.author.mention}, ваше сообщение удалено за использование запрещённого слова.", delete_after=10)
+        log_channel = message.guild.get_channel(SERVER_LOG_CHANNEL_ID)
+        if log_channel:
+            embed = discord.Embed(title="🚫 Модерация слов", color=0xe74c3c, timestamp=datetime.datetime.now())
+            embed.add_field(name="Пользователь", value=message.author.mention)
+            embed.add_field(name="Канал", value=message.channel.mention)
+            embed.add_field(name="Содержание", value=message.content[:500])
+            await log_channel.send(embed=embed)
     await bot.process_commands(message)
 
 @tasks.loop(minutes=10)
@@ -685,7 +682,7 @@ async def bank_balance(interaction: discord.Interaction):
     balance = get_family_balance()
     await interaction.response.send_message(f'💰 Баланс семьи: {balance}')
 
-@bot.tree.command(name="пополнить", description="Пополнить семейный банк (обязательно прикрепите скриншот)", guild=GUILD_ID)
+@bot.tree.command(name="пополнить", description="Пополнить семейный банк (скриншот обязателен)", guild=GUILD_ID)
 @app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
 async def bank_add(interaction: discord.Interaction, сумма: int, причина: str = "", скриншот: discord.Attachment = None):
     if скриншот is None:
@@ -703,7 +700,10 @@ async def bank_add(interaction: discord.Interaction, сумма: int, причи
     conn.commit()
     new_balance = get_family_balance()
     log_action(interaction.user.id, nick, "Пополнение банка", f"+{сумма}, причина: {причина}")
-    await interaction.response.send_message(f'💰 Счёт семьи пополнен на {сумма} (от {nick}). Баланс: {new_balance}.')
+    await interaction.response.send_message(
+        f'💰 Счёт семьи пополнен на {сумма} (от {nick}). Баланс: {new_balance}.',
+        file=await скриншот.to_file()
+    )
 
 @bot.tree.command(name="снять", description="Снять деньги из семейного банка", guild=GUILD_ID)
 @app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
@@ -884,7 +884,10 @@ async def bank_add_txt(ctx, amount: int, *, reason=""):
     conn.commit()
     new_balance = get_family_balance()
     log_action(ctx.author.id, nick, "Пополнение банка", f"+{amount}, причина: {reason}")
-    await ctx.send(f"💰 Счёт семьи пополнен на {amount} (от {nick}). Баланс: {new_balance}.")
+    await ctx.send(
+        f"💰 Счёт семьи пополнен на {amount} (от {nick}). Баланс: {new_balance}.",
+        file=await ctx.message.attachments[0].to_file()
+    )
 
 @bot.command(name="снять")
 @commands.check(lambda ctx: has_role(ctx, DEADLY_ROLE, SUPER_ADMIN_ROLE))
