@@ -1,11 +1,13 @@
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
+from discord.ui import Button, View
 import sqlite3
 import datetime
 import io
 import os
 import re
+import random
 from rus_must import must_filter
 from flask import Flask
 from threading import Thread
@@ -130,6 +132,8 @@ class MyBot(commands.Bot):
         print("Слеш-команды синхронизированы.")
 
 bot = MyBot()
+
+games = {}
 
 def get_member_nick(user_id):
     c.execute("SELECT nickname FROM family_members WHERE discord_id=?", (user_id,))
@@ -392,6 +396,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="⚠️ Дисциплина", value="/дв @Участники Тип Причина\n/выг [@Участник]\n/снятьдв @Участник Причина", inline=False)
     embed.add_field(name="📋 Логи", value="/logs [@Участник]", inline=False)
     embed.add_field(name="💾 Бекап", value="/backup\n/restore\n/reset_contracts", inline=False)
+    embed.add_field(name="🎮 Игры", value="/игра — запустить мини-игру (змейка, сапёр)", inline=False)
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="backup", description="Сохранить базу данных", guild=GUILD_ID)
@@ -559,7 +564,8 @@ async def take_car(interaction: discord.Interaction, номер: int, часы: 
     conn.commit()
     log_action(interaction.user.id, nick, "Взять авто", f"Номер {номер}, на {часы} ч")
     await interaction.response.send_message(f'✅ `{plate}` выдано `{nick}` на {часы} ч до {return_at.strftime("%d.%m.%Y %H:%M")}.')
-    @bot.tree.command(name="веавто", description="Вернуть автомобиль", guild=GUILD_ID)
+
+@bot.tree.command(name="веавто", description="Вернуть автомобиль", guild=GUILD_ID)
 @app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
 async def return_car(interaction: discord.Interaction, номер: int):
     c.execute("SELECT plate, status FROM vehicles WHERE id=?", (номер,))
@@ -863,6 +869,241 @@ async def show_logs(interaction: discord.Interaction, участник: str = No
     embed = discord.Embed(title="📋 Логи", description='\n'.join(lines), color=0x3498db)
     await interaction.response.send_message(embed=embed)
 
+# ------------------- МИНИ-ИГРЫ -------------------
+class SnakeGame:
+    def __init__(self):
+        self.board_size = 8
+        self.snake = [(4,4)]
+        self.direction = (0,1)
+        self.food = self.place_food()
+        self.score = 0
+        self.game_over = False
+
+    def place_food(self):
+        while True:
+            pos = (random.randint(0, self.board_size-1), random.randint(0, self.board_size-1))
+            if pos not in self.snake:
+                return pos
+
+    def move(self):
+        if self.game_over:
+            return False
+        head = self.snake[0]
+        new_head = (head[0] + self.direction[0], head[1] + self.direction[1])
+        if not (0 <= new_head[0] < self.board_size and 0 <= new_head[1] < self.board_size) or new_head in self.snake:
+            self.game_over = True
+            return False
+        self.snake.insert(0, new_head)
+        if new_head == self.food:
+            self.score += 1
+            self.food = self.place_food()
+        else:
+            self.snake.pop()
+        return True
+
+    def render(self):
+        board = [['⬛' for _ in range(self.board_size)] for _ in range(self.board_size)]
+        for y,x in self.snake:
+            if 0 <= y < self.board_size and 0 <= x < self.board_size:
+                board[y][x] = '🟢'
+        fy, fx = self.food
+        board[fy][fx] = '🍎'
+        head_y, head_x = self.snake[0]
+        if 0 <= head_y < self.board_size and 0 <= head_x < self.board_size:
+            board[head_y][head_x] = '🐍'
+        return '\n'.join(''.join(row) for row in board)
+
+class MinesweeperGame:
+    def __init__(self, size=5, mines=4):
+        self.size = size
+        self.mines = set()
+        while len(self.mines) < mines:
+            self.mines.add((random.randint(0,size-1), random.randint(0,size-1)))
+        self.revealed = [[False]*size for _ in range(size)]
+        self.game_over = False
+
+    def reveal(self, x, y):
+        if (x,y) in self.mines:
+            self.game_over = True
+            return '💣'
+        count = 0
+        for dx in (-1,0,1):
+            for dy in (-1,0,1):
+                if dx==0 and dy==0: continue
+                nx, ny = x+dx, y+dy
+                if 0 <= nx < self.size and 0 <= ny < self.size and (nx,ny) in self.mines:
+                    count += 1
+        self.revealed[y][x] = True
+        emoji_map = ['0️⃣','1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣']
+        return emoji_map[count] if count > 0 else '⬜'
+
+    def render(self):
+        lines = []
+        for y in range(self.size):
+            row = ''
+            for x in range(self.size):
+                if self.revealed[y][x]:
+                    if (x,y) in self.mines:
+                        row += '💣'
+                    else:
+                        count = 0
+                        for dx in (-1,0,1):
+                            for dy in (-1,0,1):
+                                if dx==0 and dy==0: continue
+                                nx, ny = x+dx, y+dy
+                                if 0 <= nx < self.size and 0 <= ny < self.size and (nx,ny) in self.mines:
+                                    count += 1
+                        emoji_map = ['0️⃣','1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣']
+                        row += emoji_map[count] if count > 0 else '⬜'
+                else:
+                    row += '⬛'
+            lines.append(row)
+        return '\n'.join(lines)
+
+class GameView(View):
+    def __init__(self, game, user_id, game_type):
+        super().__init__(timeout=120)
+        self.game = game
+        self.user_id = user_id
+        self.game_type = game_type
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Это не ваша игра!", ephemeral=True)
+            return False
+        return True
+
+class SnakeView(GameView):
+    def __init__(self, game, user_id):
+        super().__init__(game, user_id, "змейка")
+        for emoji in ['⬆️','⬇️','⬅️','➡️']:
+            self.add_item(Button(emoji=emoji, style=discord.ButtonStyle.secondary, custom_id=emoji))
+
+    async def update_game(self, interaction):
+        self.game.move()
+        embed = discord.Embed(title="🐍 Змейка", description=self.game.render(), color=0x2ecc71)
+        embed.set_footer(text=f"Счёт: {self.game.score}")
+        if self.game.game_over:
+            embed.title = "💀 Игра окончена!"
+            for child in self.children:
+                child.disabled = True
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(custom_id='⬆️')
+    async def up(self, interaction: discord.Interaction, button: Button):
+        if self.game.direction != (1,0):
+            self.game.direction = (-1,0)
+        await self.update_game(interaction)
+
+    @discord.ui.button(custom_id='⬇️')
+    async def down(self, interaction: discord.Interaction, button: Button):
+        if self.game.direction != (-1,0):
+            self.game.direction = (1,0)
+        await self.update_game(interaction)
+
+    @discord.ui.button(custom_id='⬅️')
+    async def left(self, interaction: discord.Interaction, button: Button):
+        if self.game.direction != (0,1):
+            self.game.direction = (0,-1)
+        await self.update_game(interaction)
+
+    @discord.ui.button(custom_id='➡️')
+    async def right(self, interaction: discord.Interaction, button: Button):
+        if self.game.direction != (0,-1):
+            self.game.direction = (0,1)
+        await self.update_game(interaction)
+
+class MinesweeperView(GameView):
+    def __init__(self, game, user_id):
+        super().__init__(game, user_id, "сапёр")
+        for i in range(25):
+            x = i % 5
+            y = i // 5
+            self.add_item(Button(label='\u200b', style=discord.ButtonStyle.secondary, row=y, custom_id=str(i)))
+
+    async def update(self, interaction, x, y):
+        result = self.game.reveal(x, y)
+        embed = discord.Embed(title="💣 Сапёр", description=self.game.render(), color=0x3498db)
+        if self.game.game_over:
+            embed.title = "💥 Взрыв!"
+            for child in self.children:
+                child.disabled = True
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(custom_id='0')
+    async def btn0(self, interaction, button): await self.update(interaction, 0, 0)
+    @discord.ui.button(custom_id='1')
+    async def btn1(self, interaction, button): await self.update(interaction, 1, 0)
+    @discord.ui.button(custom_id='2')
+    async def btn2(self, interaction, button): await self.update(interaction, 2, 0)
+    @discord.ui.button(custom_id='3')
+    async def btn3(self, interaction, button): await self.update(interaction, 3, 0)
+    @discord.ui.button(custom_id='4')
+    async def btn4(self, interaction, button): await self.update(interaction, 4, 0)
+    @discord.ui.button(custom_id='5')
+    async def btn5(self, interaction, button): await self.update(interaction, 0, 1)
+    @discord.ui.button(custom_id='6')
+    async def btn6(self, interaction, button): await self.update(interaction, 1, 1)
+    @discord.ui.button(custom_id='7')
+    async def btn7(self, interaction, button): await self.update(interaction, 2, 1)
+    @discord.ui.button(custom_id='8')
+    async def btn8(self, interaction, button): await self.update(interaction, 3, 1)
+    @discord.ui.button(custom_id='9')
+    async def btn9(self, interaction, button): await self.update(interaction, 4, 1)
+    @discord.ui.button(custom_id='10')
+    async def btn10(self, interaction, button): await self.update(interaction, 0, 2)
+    @discord.ui.button(custom_id='11')
+    async def btn11(self, interaction, button): await self.update(interaction, 1, 2)
+    @discord.ui.button(custom_id='12')
+    async def btn12(self, interaction, button): await self.update(interaction, 2, 2)
+    @discord.ui.button(custom_id='13')
+    async def btn13(self, interaction, button): await self.update(interaction, 3, 2)
+    @discord.ui.button(custom_id='14')
+    async def btn14(self, interaction, button): await self.update(interaction, 4, 2)
+    @discord.ui.button(custom_id='15')
+    async def btn15(self, interaction, button): await self.update(interaction, 0, 3)
+    @discord.ui.button(custom_id='16')
+    async def btn16(self, interaction, button): await self.update(interaction, 1, 3)
+    @discord.ui.button(custom_id='17')
+    async def btn17(self, interaction, button): await self.update(interaction, 2, 3)
+    @discord.ui.button(custom_id='18')
+    async def btn18(self, interaction, button): await self.update(interaction, 3, 3)
+    @discord.ui.button(custom_id='19')
+    async def btn19(self, interaction, button): await self.update(interaction, 4, 3)
+    @discord.ui.button(custom_id='20')
+    async def btn20(self, interaction, button): await self.update(interaction, 0, 4)
+    @discord.ui.button(custom_id='21')
+    async def btn21(self, interaction, button): await self.update(interaction, 1, 4)
+    @discord.ui.button(custom_id='22')
+    async def btn22(self, interaction, button): await self.update(interaction, 2, 4)
+    @discord.ui.button(custom_id='23')
+    async def btn23(self, interaction, button): await self.update(interaction, 3, 4)
+    @discord.ui.button(custom_id='24')
+    async def btn24(self, interaction, button): await self.update(interaction, 4, 4)
+
+@bot.tree.command(name="игра", description="Запустить мини-игру", guild=GUILD_ID)
+@app_commands.choices(игра=[
+    app_commands.Choice(name="Змейка", value="змейка"),
+    app_commands.Choice(name="Сапёр", value="сапёр")
+])
+async def start_game(interaction: discord.Interaction, игра: str):
+    if interaction.user.id in games:
+        await interaction.response.send_message("У вас уже есть активная игра!", ephemeral=True)
+        return
+    if игра == "змейка":
+        game = SnakeGame()
+        view = SnakeView(game, interaction.user.id)
+        embed = discord.Embed(title="🐍 Змейка", description=game.render(), color=0x2ecc71)
+        embed.set_footer(text="Счёт: 0")
+        await interaction.response.send_message(embed=embed, view=view)
+        games[interaction.user.id] = game
+    elif игра == "сапёр":
+        game = MinesweeperGame()
+        view = MinesweeperView(game, interaction.user.id)
+        embed = discord.Embed(title="💣 Сапёр", description=game.render(), color=0x3498db)
+        await interaction.response.send_message(embed=embed, view=view)
+        games[interaction.user.id] = game
+
 @bot.command(name="банк")
 @commands.check(lambda ctx: has_role(ctx, ASSISTANT_ROLE, SUPER_ADMIN_ROLE))
 async def bank_balance_txt(ctx):
@@ -939,7 +1180,8 @@ async def help_txt(ctx):
     msg += "💰 **Банк:** !банк, !пополнить Сумма [Причина] (скриншот обязателен), !снять Сумма [Причина]\n"
     msg += "⚠️ **Дисциплина:** !дв @Участники Тип Причина, !выг [@Участник], !снятьдв @Участник Причина\n"
     msg += "📋 **Логи:** !logs [@Участник]\n"
-    msg += "💾 **Бекап:** !backup, !restore, !reset_contracts"
+    msg += "💾 **Бекап:** !backup, !restore, !reset_contracts\n"
+    msg += "🎮 **Игры:** /игра"
     await ctx.send(msg)
 
 app = Flask(__name__)
