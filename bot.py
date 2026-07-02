@@ -1000,10 +1000,6 @@ class GameView(View):
 class SnakeView(GameView):
     def __init__(self, game, user_id):
         super().__init__(game, user_id, "змейка")
-        self.add_item(Button(emoji='⬆️', style=discord.ButtonStyle.secondary, custom_id='up'))
-        self.add_item(Button(emoji='⬇️', style=discord.ButtonStyle.secondary, custom_id='down'))
-        self.add_item(Button(emoji='⬅️', style=discord.ButtonStyle.secondary, custom_id='left'))
-        self.add_item(Button(emoji='➡️', style=discord.ButtonStyle.secondary, custom_id='right'))
 
     async def update_game(self, interaction):
         self.game.move()
@@ -1015,26 +1011,30 @@ class SnakeView(GameView):
                 child.disabled = True
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(custom_id='up')
+    @discord.ui.button(emoji='⬆️', style=discord.ButtonStyle.secondary, custom_id='snake_up')
     async def up(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer()
         if self.game.direction != (1,0):
             self.game.direction = (-1,0)
         await self.update_game(interaction)
 
-    @discord.ui.button(custom_id='down')
+    @discord.ui.button(emoji='⬇️', style=discord.ButtonStyle.secondary, custom_id='snake_down')
     async def down(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer()
         if self.game.direction != (-1,0):
             self.game.direction = (1,0)
         await self.update_game(interaction)
 
-    @discord.ui.button(custom_id='left')
+    @discord.ui.button(emoji='⬅️', style=discord.ButtonStyle.secondary, custom_id='snake_left')
     async def left(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer()
         if self.game.direction != (0,1):
             self.game.direction = (0,-1)
         await self.update_game(interaction)
 
-    @discord.ui.button(custom_id='right')
+    @discord.ui.button(emoji='➡️', style=discord.ButtonStyle.secondary, custom_id='snake_right')
     async def right(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer()
         if self.game.direction != (0,-1):
             self.game.direction = (0,1)
         await self.update_game(interaction)
@@ -1044,7 +1044,7 @@ class MinesweeperView(GameView):
         super().__init__(game, user_id, "сапёр")
 
     async def update(self, interaction, x, y):
-        result = self.game.reveal(x, y)
+        self.game.reveal(x, y)
         embed = discord.Embed(title="💣 Сапёр", description=self.game.render(), color=0x3498db)
         if self.game.game_over:
             embed.title = "💥 Взрыв!"
@@ -1052,60 +1052,130 @@ class MinesweeperView(GameView):
                 child.disabled = True
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(custom_id='0', row=0)
-    async def btn0(self, interaction, button): await self.update(interaction, 0, 0)
-    @discord.ui.button(custom_id='1', row=0)
-    async def btn1(self, interaction, button): await self.update(interaction, 1, 0)
-    @discord.ui.button(custom_id='2', row=0)
-    async def btn2(self, interaction, button): await self.update(interaction, 2, 0)
-    @discord.ui.button(custom_id='3', row=0)
-    async def btn3(self, interaction, button): await self.update(interaction, 3, 0)
-    @discord.ui.button(custom_id='4', row=0)
-    async def btn4(self, interaction, button): await self.update(interaction, 4, 0)
+    @discord.ui.button(custom_id='ms0', row=0)
+    async def btn0(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 0, 0)
 
-    @discord.ui.button(custom_id='5', row=1)
-    async def btn5(self, interaction, button): await self.update(interaction, 0, 1)
-    @discord.ui.button(custom_id='6', row=1)
-    async def btn6(self, interaction, button): await self.update(interaction, 1, 1)
-    @discord.ui.button(custom_id='7', row=1)
-    async def btn7(self, interaction, button): await self.update(interaction, 2, 1)
-    @discord.ui.button(custom_id='8', row=1)
-    async def btn8(self, interaction, button): await self.update(interaction, 3, 1)
-    @discord.ui.button(custom_id='9', row=1)
-    async def btn9(self, interaction, button): await self.update(interaction, 4, 1)
+    @discord.ui.button(custom_id='ms1', row=0)
+    async def btn1(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 1, 0)
 
-    @discord.ui.button(custom_id='10', row=2)
-    async def btn10(self, interaction, button): await self.update(interaction, 0, 2)
-    @discord.ui.button(custom_id='11', row=2)
-    async def btn11(self, interaction, button): await self.update(interaction, 1, 2)
-    @discord.ui.button(custom_id='12', row=2)
-    async def btn12(self, interaction, button): await self.update(interaction, 2, 2)
-    @discord.ui.button(custom_id='13', row=2)
-    async def btn13(self, interaction, button): await self.update(interaction, 3, 2)
-    @discord.ui.button(custom_id='14', row=2)
-    async def btn14(self, interaction, button): await self.update(interaction, 4, 2)
+    @discord.ui.button(custom_id='ms2', row=0)
+    async def btn2(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 2, 0)
 
-    @discord.ui.button(custom_id='15', row=3)
-    async def btn15(self, interaction, button): await self.update(interaction, 0, 3)
-    @discord.ui.button(custom_id='16', row=3)
-    async def btn16(self, interaction, button): await self.update(interaction, 1, 3)
-    @discord.ui.button(custom_id='17', row=3)
-    async def btn17(self, interaction, button): await self.update(interaction, 2, 3)
-    @discord.ui.button(custom_id='18', row=3)
-    async def btn18(self, interaction, button): await self.update(interaction, 3, 3)
-    @discord.ui.button(custom_id='19', row=3)
-    async def btn19(self, interaction, button): await self.update(interaction, 4, 3)
+    @discord.ui.button(custom_id='ms3', row=0)
+    async def btn3(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 3, 0)
 
-    @discord.ui.button(custom_id='20', row=4)
-    async def btn20(self, interaction, button): await self.update(interaction, 0, 4)
-    @discord.ui.button(custom_id='21', row=4)
-    async def btn21(self, interaction, button): await self.update(interaction, 1, 4)
-    @discord.ui.button(custom_id='22', row=4)
-    async def btn22(self, interaction, button): await self.update(interaction, 2, 4)
-    @discord.ui.button(custom_id='23', row=4)
-    async def btn23(self, interaction, button): await self.update(interaction, 3, 4)
-    @discord.ui.button(custom_id='24', row=4)
-    async def btn24(self, interaction, button): await self.update(interaction, 4, 4)
+    @discord.ui.button(custom_id='ms4', row=0)
+    async def btn4(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 4, 0)
+
+    @discord.ui.button(custom_id='ms5', row=1)
+    async def btn5(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 0, 1)
+
+    @discord.ui.button(custom_id='ms6', row=1)
+    async def btn6(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 1, 1)
+
+    @discord.ui.button(custom_id='ms7', row=1)
+    async def btn7(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 2, 1)
+
+    @discord.ui.button(custom_id='ms8', row=1)
+    async def btn8(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 3, 1)
+
+    @discord.ui.button(custom_id='ms9', row=1)
+    async def btn9(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 4, 1)
+
+    @discord.ui.button(custom_id='ms10', row=2)
+    async def btn10(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 0, 2)
+
+    @discord.ui.button(custom_id='ms11', row=2)
+    async def btn11(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 1, 2)
+
+    @discord.ui.button(custom_id='ms12', row=2)
+    async def btn12(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 2, 2)
+
+    @discord.ui.button(custom_id='ms13', row=2)
+    async def btn13(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 3, 2)
+
+    @discord.ui.button(custom_id='ms14', row=2)
+    async def btn14(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 4, 2)
+
+    @discord.ui.button(custom_id='ms15', row=3)
+    async def btn15(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 0, 3)
+
+    @discord.ui.button(custom_id='ms16', row=3)
+    async def btn16(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 1, 3)
+
+    @discord.ui.button(custom_id='ms17', row=3)
+    async def btn17(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 2, 3)
+
+    @discord.ui.button(custom_id='ms18', row=3)
+    async def btn18(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 3, 3)
+
+    @discord.ui.button(custom_id='ms19', row=3)
+    async def btn19(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 4, 3)
+
+    @discord.ui.button(custom_id='ms20', row=4)
+    async def btn20(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 0, 4)
+
+    @discord.ui.button(custom_id='ms21', row=4)
+    async def btn21(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 1, 4)
+
+    @discord.ui.button(custom_id='ms22', row=4)
+    async def btn22(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 2, 4)
+
+    @discord.ui.button(custom_id='ms23', row=4)
+    async def btn23(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 3, 4)
+
+    @discord.ui.button(custom_id='ms24', row=4)
+    async def btn24(self, interaction, button):
+        await interaction.response.defer()
+        await self.update(interaction, 4, 4)
 
 @bot.tree.command(name="игра", description="Запустить мини-игру", guild=GUILD_ID)
 @app_commands.choices(игра=[
