@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 from discord.ui import View, Select, Button
 import sqlite3
@@ -655,31 +655,24 @@ class RoleSelectView(View):
         self.add_item(back_btn)
         await interaction.edit_original_response(view=self)
 
-@bot.tree.command(name="роль", description="Выбрать или снять роль организации")
-async def role_select(interaction: discord.Interaction):
-    view = RoleSelectView(interaction.user.id, interaction.guild.id)
-    view.build_main_menu()
-    embed = discord.Embed(title="🏢 Выбор роли", description="Сначала выберите категорию, затем организацию. Если у вас уже есть роль, она будет снята.", color=0x2ecc71)
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+@bot.command(name="setup")
+async def setup(ctx):
+    if not isinstance(ctx.channel, discord.DMChannel):
+        return await ctx.send("Эту команду нужно выполнять в личных сообщениях бота.", delete_after=10)
+    if ctx.author.id in sessions:
+        return await ctx.send("У вас уже есть активная сессия настройки.", delete_after=10)
+    session = SetupSession(bot, ctx.author.id)
+    await session.start(ctx.channel)
+    sessions[ctx.author.id] = session
 
-@bot.tree.command(name="setup", description="Настроить бота (только в ЛС)")
-async def setup(interaction: discord.Interaction):
-    if not isinstance(interaction.channel, discord.DMChannel):
-        return await interaction.response.send_message("Эту команду нужно выполнять в личных сообщениях бота.", ephemeral=True)
-    if interaction.user.id in sessions:
-        return await interaction.response.send_message("У вас уже есть активная сессия настройки.", ephemeral=True)
-    session = SetupSession(bot, interaction.user.id)
-    await session.start(interaction.channel)
-    sessions[interaction.user.id] = session
-
-@bot.tree.command(name="orgconfig", description="Настроить роли организаций (только в ЛС)")
-async def orgconfig(interaction: discord.Interaction):
-    if not isinstance(interaction.channel, discord.DMChannel):
-        return await interaction.response.send_message("Эту команду нужно выполнять в личных сообщениях бота.", ephemeral=True)
-    if interaction.user.id in org_sessions:
-        return await interaction.response.send_message("У вас уже есть активная настройка организаций.", ephemeral=True)
-    await interaction.response.send_message("Укажите ID сервера для настройки организаций.")
-    org_sessions[interaction.user.id] = {"state": "guild_id", "user_id": interaction.user.id}
+@bot.command(name="orgconfig")
+async def orgconfig(ctx):
+    if not isinstance(ctx.channel, discord.DMChannel):
+        return await ctx.send("Эту команду нужно выполнять в личных сообщениях бота.", delete_after=10)
+    if ctx.author.id in org_sessions:
+        return await ctx.send("У вас уже есть активная настройка организаций.", delete_after=10)
+    await ctx.send("Укажите ID сервера для настройки организаций.")
+    org_sessions[ctx.author.id] = {"state": "guild_id", "user_id": ctx.author.id}
 
 @bot.event
 async def on_message(message):
@@ -1053,7 +1046,7 @@ async def take_contract(interaction: discord.Interaction, участники: st
     status_channel_id = get_contract_status_channel(interaction.guild.id)
     status_channel = interaction.guild.get_channel(status_channel_id) if status_channel_id else None
     if status_channel is None:
-        return await interaction.response.send_message("❌ Канал уведомлений о статусе не найден. Настройте бота через /setup в ЛС.", ephemeral=True)
+        return await interaction.response.send_message("❌ Канал уведомлений о статусе не найден. Настройте бота через !setup в ЛС.", ephemeral=True)
     participants_mentions = ', '.join(m.mention for m in members)
     contract_role_id = get_contract_role(interaction.guild.id)
     role_mention = f"<@&{contract_role_id}>" if contract_role_id else ""
@@ -1486,6 +1479,13 @@ async def start_game(interaction: discord.Interaction, игра: str):
         embed = discord.Embed(title="💣 Сапёр", description=game.render(), color=0x3498db)
         await interaction.response.send_message(embed=embed, view=view)
         games[interaction.user.id] = game
+
+@bot.tree.command(name="роль", description="Выбрать или снять роль организации")
+async def role_select(interaction: discord.Interaction):
+    view = RoleSelectView(interaction.user.id, interaction.guild.id)
+    view.build_main_menu()
+    embed = discord.Embed(title="🏢 Выбор роли", description="Сначала выберите категорию, затем организацию. Если у вас уже есть роль, она будет снята.", color=0x2ecc71)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 @bot.command(name="банк")
 async def bank_balance_txt(ctx):
