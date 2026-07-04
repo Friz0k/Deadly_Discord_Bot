@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
 from discord.ui import View, Select, Button
 import sqlite3
@@ -124,17 +124,16 @@ c.execute('''CREATE TABLE IF NOT EXISTS contracts (
 )''')
 conn.commit()
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-intents.guilds = True
-intents.messages = True
-intents.voice_states = True
-intents.presences = True
-intents.moderation = True
-
 class MyBot(commands.Bot):
     def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.members = True
+        intents.guilds = True
+        intents.messages = True
+        intents.voice_states = True
+        intents.presences = True
+        intents.moderation = True
         super().__init__(command_prefix="!", intents=intents, help_command=None)
 
     async def setup_hook(self):
@@ -240,25 +239,25 @@ async def has_contract_role(ctx):
         return False
     return any(role.id == role_id for role in ctx.author.roles)
 
-async def check_admin(interaction: discord.Interaction):
+async def check_admin(interaction):
     role_id = get_admin_role(interaction.guild.id)
     if role_id is None:
         return interaction.user.guild_permissions.administrator
     return any(role.id == role_id for role in interaction.user.roles)
 
-async def check_recruiter(interaction: discord.Interaction):
+async def check_recruiter(interaction):
     role_id = get_recruiter_role(interaction.guild.id)
     if role_id is None:
         return False
     return any(role.id == role_id for role in interaction.user.roles)
 
-async def check_dv(interaction: discord.Interaction):
+async def check_dv(interaction):
     role_id = get_dv_role(interaction.guild.id)
     if role_id is None:
         return False
     return any(role.id == role_id for role in interaction.user.roles)
 
-async def check_contract(interaction: discord.Interaction):
+async def check_contract(interaction):
     role_id = get_contract_role(interaction.guild.id)
     if role_id is None:
         return False
@@ -390,7 +389,7 @@ class SetupSession:
                 self.step = 10
                 await self.channel.send("Настройка завершена! Сохраняем данные...")
                 await self.save_config()
-                await self.channel.send("✅ Бот успешно настроен для сервера! Теперь можно использовать /роль и другие команды.")
+                await self.channel.send("✅ Бот успешно настроен для сервера!")
                 del sessions[self.user_id]
             except ValueError:
                 await self.channel.send("Неверный ID. Введите число.")
@@ -413,12 +412,14 @@ class OrgConfigSession:
         self.state = "category"
         self.categories = ["Госс", "Банды", "Мафии"]
         self.current_category = None
-        self.current_org = None
-        self.current_sub = None
+        self.current_org_name = None
+        self.org_count = 0
+        self.org_names = []
         self.org_index = 0
+        self.current_role_id = None
+        self.current_cc_role_id = None
+        self.sub_count = 0
         self.sub_index = 0
-        self.org_list = []
-        self.sub_list = []
         self.channel = None
         self.pending_org_data = {}
 
@@ -427,89 +428,71 @@ class OrgConfigSession:
         await self.ask_category()
 
     async def ask_category(self):
-        if self.org_index >= len(self.categories):
+        if not self.categories:
             await self.channel.send("🎉 Настройка организаций завершена!")
             del org_sessions[self.user_id]
             return
-        self.current_category = self.categories[self.org_index]
-        self.state = "category"
-        self.org_list = list(self.get_orgs_for_category(self.current_category).keys())
+        self.current_category = self.categories.pop(0)
+        self.org_names = []
         self.org_index = 0
-        self.sub_index = 0
-        await self.channel.send(f"Начинаем настройку **{self.current_category}**. Сколько организаций в этой категории? Введите число.")
+        await self.channel.send(f"Настройка категории **{self.current_category}**.\nСколько организаций в ней? Введите число.")
         self.state = "org_count"
 
     async def handle_message(self, message):
         if message.author.id != self.user_id:
             return
         content = message.content.strip()
-
         if self.state == "org_count":
             try:
-                count = int(content)
-                self.org_count = count
+                self.org_count = int(content)
                 self.state = "org_name"
                 self.org_names = []
                 self.org_index = 0
                 await self.channel.send("Введите название первой организации.")
             except ValueError:
                 await self.channel.send("Введите число.")
-
         elif self.state == "org_name":
             self.current_org_name = content
             self.state = "org_role"
             await self.channel.send(f"Введите ID роли для **{self.current_org_name}**.")
-
         elif self.state == "org_role":
             try:
-                role_id = int(content)
-                self.current_role_id = role_id
+                self.current_role_id = int(content)
                 self.state = "org_cc_role"
                 await self.channel.send(f"Введите ID CC-роли для **{self.current_org_name}** (или 0, если нет).")
             except ValueError:
                 await self.channel.send("Введите число.")
-
         elif self.state == "org_cc_role":
             try:
-                cc_role_id = int(content)
+                self.current_cc_role_id = int(content)
                 self.state = "has_subs"
-                self.pending_org_data[self.current_org_name] = {
-                    "role_id": self.current_role_id,
-                    "cc_role_id": cc_role_id
-                }
                 await self.channel.send(f"Есть ли у **{self.current_org_name}** подразделения? (да/нет)")
             except ValueError:
                 await self.channel.send("Введите число.")
-
         elif self.state == "has_subs":
             if content.lower() in ("да", "yes", "y"):
                 self.state = "sub_count"
                 await self.channel.send("Сколько подразделений? Введите число.")
             else:
+                await self.save_org()
                 self.org_index += 1
                 if self.org_index < self.org_count:
                     self.state = "org_name"
                     await self.channel.send("Введите название следующей организации.")
                 else:
-                    self.org_index = 0
-                    self.categories.pop(0) if self.categories else None
                     await self.ask_category()
-
         elif self.state == "sub_count":
             try:
-                sub_count = int(content)
-                self.sub_count = sub_count
+                self.sub_count = int(content)
                 self.sub_index = 0
                 self.state = "sub_name"
                 await self.channel.send("Введите название первого подразделения.")
             except ValueError:
                 await self.channel.send("Введите число.")
-
         elif self.state == "sub_name":
             self.current_sub_name = content
             self.state = "sub_role"
             await self.channel.send(f"Введите ID роли для подразделения **{self.current_sub_name}**.")
-
         elif self.state == "sub_role":
             try:
                 sub_role_id = int(content)
@@ -518,7 +501,6 @@ class OrgConfigSession:
                 await self.channel.send(f"Введите ID CC-роли для подразделения **{self.current_sub_name}** (или 0, если нет).")
             except ValueError:
                 await self.channel.send("Введите число.")
-
         elif self.state == "sub_cc_role":
             try:
                 sub_cc_role_id = int(content)
@@ -528,21 +510,22 @@ class OrgConfigSession:
                 self.sub_index += 1
                 if self.sub_index < self.sub_count:
                     self.state = "sub_name"
-                    await self.channel.send(f"Введите название следующего подразделения.")
+                    await self.channel.send("Введите название следующего подразделения.")
                 else:
+                    await self.save_org()
                     self.org_index += 1
                     if self.org_index < self.org_count:
                         self.state = "org_name"
                         await self.channel.send("Введите название следующей организации.")
                     else:
-                        self.org_index = 0
-                        self.categories.pop(0) if self.categories else None
                         await self.ask_category()
             except ValueError:
                 await self.channel.send("Введите число.")
 
-    def get_orgs_for_category(self, category):
-        return {}
+    async def save_org(self):
+        c.execute("INSERT OR REPLACE INTO org_roles (guild_id, category, org, sub, role_id, cc_role_id) VALUES (?,?,?,?,?,?)",
+                  (self.guild_id, self.current_category, self.current_org_name, "", self.current_role_id, self.current_cc_role_id))
+        conn.commit()
 
 class RoleSelectView(View):
     def __init__(self, user_id, guild_id):
@@ -561,10 +544,14 @@ class RoleSelectView(View):
             return False
         return True
 
+    async def on_timeout(self):
+        if self.message:
+            await self.message.edit(content="⏰ Время выбора истекло.", view=None)
+
     def build_main_menu(self):
         self.clear_items()
         self.step = "main"
-        categories = list(self.org_data.keys())
+        categories = [cat for cat in self.org_data if self.org_data[cat]]
         if not categories:
             self.add_item(Button(label="Нет настроенных организаций", disabled=True, style=discord.ButtonStyle.secondary))
             return
@@ -576,9 +563,14 @@ class RoleSelectView(View):
     async def category_select(self, interaction: discord.Interaction):
         await interaction.response.defer()
         self.current_category = interaction.data['values'][0]
+        orgs = list(self.org_data[self.current_category].keys())
+        if not orgs:
+            await interaction.followup.send("В этой категории нет организаций.", ephemeral=True)
+            self.build_main_menu()
+            await interaction.edit_original_response(view=self)
+            return
         self.step = "org"
         self.clear_items()
-        orgs = list(self.org_data[self.current_category].keys())
         options = [discord.SelectOption(label=org) for org in orgs]
         select = Select(placeholder=f"Выберите организацию ({self.current_category})", options=options, custom_id="org_select")
         select.callback = self.org_select
@@ -617,10 +609,12 @@ class RoleSelectView(View):
         member = interaction.guild.get_member(self.user_id)
         if not member:
             await interaction.followup.send("Пользователь не найден.", ephemeral=True)
+            self.stop()
             return
         role = interaction.guild.get_role(role_id)
         if not role:
             await interaction.followup.send("Роль не найдена.", ephemeral=True)
+            self.stop()
             return
         if role in member.roles:
             await member.remove_roles(role, reason="Самостоятельное снятие")
@@ -686,7 +680,6 @@ async def orgconfig(interaction: discord.Interaction):
         return await interaction.response.send_message("У вас уже есть активная настройка организаций.", ephemeral=True)
     await interaction.response.send_message("Укажите ID сервера для настройки организаций.")
     org_sessions[interaction.user.id] = {"state": "guild_id", "user_id": interaction.user.id}
-    # Сохраним объект сессии позже, когда получим guild_id
 
 @bot.event
 async def on_message(message):
@@ -697,7 +690,7 @@ async def on_message(message):
         return
     if message.author.id in org_sessions:
         session_data = org_sessions[message.author.id]
-        if session_data["state"] == "guild_id":
+        if isinstance(session_data, dict) and session_data["state"] == "guild_id":
             try:
                 guild_id = int(message.content)
                 guild = bot.get_guild(guild_id)
@@ -718,16 +711,18 @@ async def on_message(message):
             await session_data.handle_message(message)
             return
     content = message.content.lower()
-    if message.guild and message.channel.id != get_log_channel(message.guild.id):
-        if profanity.contains_profanity(content):
-            await message.delete()
-            await message.channel.send(f"{message.author.mention}, ваше сообщение удалено за использование запрещённого слова.", delete_after=10)
-            return
-        for word in BAD_WORDS:
-            if re.search(rf'\b{word}\b', content):
+    if message.guild:
+        log_id = get_log_channel(message.guild.id)
+        if message.channel.id != log_id:
+            if profanity.contains_profanity(content):
                 await message.delete()
                 await message.channel.send(f"{message.author.mention}, ваше сообщение удалено за использование запрещённого слова.", delete_after=10)
                 return
+            for word in BAD_WORDS:
+                if re.search(rf'\b{word}\b', content):
+                    await message.delete()
+                    await message.channel.send(f"{message.author.mention}, ваше сообщение удалено за использование запрещённого слова.", delete_after=10)
+                    return
     await bot.process_commands(message)
 
 @bot.tree.command(name="хелп", description="Помощь по боту")
@@ -1285,6 +1280,10 @@ class GameView(View):
             return False
         return True
 
+    async def on_timeout(self):
+        if self.message:
+            await self.message.edit(content="⏰ Время игры истекло.", view=None)
+
 class SnakeView(GameView):
     def __init__(self, game, user_id):
         super().__init__(game, user_id, "змейка")
@@ -1565,48 +1564,6 @@ async def help_txt(ctx):
     msg += "🛠️ **Настройка:** !setup в ЛС\n"
     msg += "🎮 **Игры:** /игра"
     await ctx.send(msg)
-
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-    if message.author.id in sessions:
-        await sessions[message.author.id].handle_message(message)
-        return
-    if message.author.id in org_sessions:
-        session_data = org_sessions[message.author.id]
-        if isinstance(session_data, dict) and session_data["state"] == "guild_id":
-            try:
-                guild_id = int(message.content)
-                guild = bot.get_guild(guild_id)
-                if guild is None:
-                    await message.channel.send("Сервер не найден.")
-                    return
-                member = guild.get_member(message.author.id)
-                if member is None or not member.guild_permissions.administrator:
-                    await message.channel.send("Вы не администратор этого сервера.")
-                    return
-                session = OrgConfigSession(bot, message.author.id, guild_id)
-                await session.start(message.channel)
-                org_sessions[message.author.id] = session
-            except ValueError:
-                await message.channel.send("Неверный ID сервера.")
-            return
-        elif isinstance(session_data, OrgConfigSession):
-            await session_data.handle_message(message)
-            return
-    content = message.content.lower()
-    if message.guild and message.channel.id != get_log_channel(message.guild.id):
-        if profanity.contains_profanity(content):
-            await message.delete()
-            await message.channel.send(f"{message.author.mention}, ваше сообщение удалено за использование запрещённого слова.", delete_after=10)
-            return
-        for word in BAD_WORDS:
-            if re.search(rf'\b{word}\b', content):
-                await message.delete()
-                await message.channel.send(f"{message.author.mention}, ваше сообщение удалено за использование запрещённого слова.", delete_after=10)
-                return
-    await bot.process_commands(message)
 
 @bot.event
 async def on_ready():
