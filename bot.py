@@ -1,39 +1,19 @@
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-from discord.ui import Button, View
+from discord.ui import View, Select, Button
 import sqlite3
 import datetime
 import io
 import os
 import re
 import random
+import json
 from better_profanity import profanity
 from flask import Flask
 from threading import Thread
 
 TOKEN = os.getenv("TOKEN")
-GUILD_ID = discord.Object(id=1473690194539708457)
-
-SUPER_ADMIN_ROLE = "Тех. Состав"
-RECRUITER_ROLE = "Recruiter"
-ASSISTANT_ROLE = "Assistant"
-DEADLY_ROLE = "Deadly"
-DISCIPLINE_ROLE = "Discipline"
-
-CONTRACT_NOTIFY_ROLE_ID = 1516422622122999888
-CONTRACT_CHANNEL_ID = 1515046132936343633
-CONTRACT_STATUS_CHANNEL_ID = 1515039473581166642
-SERVER_LOG_CHANNEL_ID = 1518296636030325017
-
-ROLE_PRED = 1473709199488975020
-ROLE_1VYG = 1473709489780953260
-ROLE_2VYG = 1473709343126847549
-ROLE_WARN = 1516422427327074404
-ROLE_FAMILY_AUTO = 1475823094869393591
-ROLE_VACATION_ID = 1517727379198578739
-
-DISC_ROLES = [ROLE_PRED, ROLE_1VYG, ROLE_2VYG, ROLE_WARN]
 DB_PATH = 'gta_rp.db'
 
 BAD_WORDS = [
@@ -49,32 +29,67 @@ BAD_WORDS = [
 conn = sqlite3.connect(DB_PATH)
 c = conn.cursor()
 
-c.execute('''CREATE TABLE IF NOT EXISTS family_members (
-    nickname TEXT PRIMARY KEY,
-    discord_id INTEGER UNIQUE,
-    joined_at TEXT
+c.execute('''CREATE TABLE IF NOT EXISTS server_config (
+    guild_id INTEGER PRIMARY KEY,
+    admin_role_id INTEGER,
+    family_role_id INTEGER,
+    contract_role_id INTEGER,
+    recruiter_role_id INTEGER,
+    dv_role_id INTEGER,
+    log_channel_id INTEGER,
+    contract_channel_id INTEGER,
+    contract_status_channel_id INTEGER,
+    discipline_roles TEXT,
+    discipline_auto_remove INTEGER DEFAULT 1,
+    discipline_remove_days INTEGER DEFAULT 7
 )''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS org_roles (
+    guild_id INTEGER,
+    category TEXT,
+    org TEXT,
+    sub TEXT,
+    role_id INTEGER,
+    cc_role_id INTEGER,
+    PRIMARY KEY (guild_id, category, org, sub)
+)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS family_members (
+    guild_id INTEGER,
+    nickname TEXT,
+    discord_id INTEGER,
+    joined_at TEXT,
+    PRIMARY KEY (guild_id, nickname)
+)''')
+
 c.execute('''CREATE TABLE IF NOT EXISTS vehicles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER,
     owner_nick TEXT,
     model TEXT,
-    plate TEXT UNIQUE,
+    plate TEXT,
     status TEXT DEFAULT 'свободен',
     taken_by TEXT,
     taken_at TEXT,
     return_at TEXT
 )''')
+
 c.execute('''CREATE TABLE IF NOT EXISTS warehouse (
-    item TEXT PRIMARY KEY,
+    guild_id INTEGER,
+    item TEXT,
     amount INTEGER CHECK(amount >= 0),
-    category TEXT DEFAULT 'Прочее'
+    category TEXT DEFAULT 'Прочее',
+    PRIMARY KEY (guild_id, item)
 )''')
+
 c.execute('''CREATE TABLE IF NOT EXISTS bank (
+    guild_id INTEGER PRIMARY KEY,
     balance INTEGER DEFAULT 0
 )''')
-c.execute("INSERT INTO bank (balance) SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM bank)")
+
 c.execute('''CREATE TABLE IF NOT EXISTS disciplinary_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER,
     nickname TEXT,
     discord_id INTEGER,
     action_type TEXT,
@@ -82,8 +97,10 @@ c.execute('''CREATE TABLE IF NOT EXISTS disciplinary_actions (
     issued_by TEXT,
     date TEXT
 )''')
+
 c.execute('''CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER,
     discord_id INTEGER,
     nickname TEXT,
     action TEXT,
@@ -91,473 +108,777 @@ c.execute('''CREATE TABLE IF NOT EXISTS logs (
     timestamp TEXT
 )''')
 
-def ensure_contracts_columns():
-    c.execute('''CREATE TABLE IF NOT EXISTS contracts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT,
-        participants TEXT,
-        due_date TEXT,
-        bills INTEGER DEFAULT 0,
-        created_by TEXT,
-        created_at TEXT,
-        status TEXT DEFAULT 'создан',
-        message_id INTEGER,
-        notified_hours INTEGER DEFAULT 0,
-        started_at TEXT
-    )''')
-    required = {'bills': 'INTEGER DEFAULT 0', 'status': "TEXT DEFAULT 'создан'", 'message_id': 'INTEGER', 'notified_hours': 'INTEGER DEFAULT 0', 'started_at': 'TEXT'}
-    for col, dtype in required.items():
-        c.execute(f"PRAGMA table_info(contracts)")
-        if col not in [col[1] for col in c.fetchall()]:
-            c.execute(f"ALTER TABLE contracts ADD COLUMN {col} {dtype}")
-    conn.commit()
-
-ensure_contracts_columns()
-
-def add_column_if_not_exists(table, column, type_def):
-    c.execute(f"PRAGMA table_info({table})")
-    if column not in [col[1] for col in c.fetchall()]:
-        c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {type_def}")
-        conn.commit()
-
-add_column_if_not_exists("family_members", "discord_id", "INTEGER")
-add_column_if_not_exists("disciplinary_actions", "discord_id", "INTEGER")
-add_column_if_not_exists("warehouse", "category", "TEXT DEFAULT 'Прочее'")
-c.execute("UPDATE warehouse SET category = 'Прочее' WHERE category = 'Проче'")
+c.execute('''CREATE TABLE IF NOT EXISTS contracts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER,
+    title TEXT,
+    participants TEXT,
+    due_date TEXT,
+    bills INTEGER DEFAULT 0,
+    created_by TEXT,
+    created_at TEXT,
+    status TEXT DEFAULT 'создан',
+    message_id INTEGER,
+    notified_hours INTEGER DEFAULT 0,
+    started_at TEXT
+)''')
 conn.commit()
+
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+intents.guilds = True
+intents.messages = True
+intents.voice_states = True
+intents.presences = True
+intents.moderation = True
 
 class MyBot(commands.Bot):
     def __init__(self):
-        intents = discord.Intents.default()
-        intents.message_content = True
-        intents.members = True
-        intents.guilds = True
-        intents.messages = True
-        intents.voice_states = True
-        intents.presences = True
-        intents.moderation = True
         super().__init__(command_prefix="!", intents=intents, help_command=None)
+
     async def setup_hook(self):
-        await self.tree.sync(guild=GUILD_ID)
-        print("Слеш-команды синхронизированы.")
+        await self.tree.sync()
+        print("Глобальные команды синхронизированы.")
 
 bot = MyBot()
-
 games = {}
+sessions = {}
+org_sessions = {}
 
-def get_member_nick(user_id):
-    c.execute("SELECT nickname FROM family_members WHERE discord_id=?", (user_id,))
+def get_config(guild_id):
+    c.execute("SELECT * FROM server_config WHERE guild_id=?", (guild_id,))
+    row = c.fetchone()
+    if not row:
+        return None
+    keys = ['guild_id','admin_role_id','family_role_id','contract_role_id',
+            'recruiter_role_id','dv_role_id','log_channel_id',
+            'contract_channel_id','contract_status_channel_id',
+            'discipline_roles','discipline_auto_remove','discipline_remove_days']
+    return dict(zip(keys, row))
+
+def get_admin_role(guild_id):
+    cfg = get_config(guild_id)
+    return cfg['admin_role_id'] if cfg else None
+
+def get_family_role(guild_id):
+    cfg = get_config(guild_id)
+    return cfg['family_role_id'] if cfg else None
+
+def get_contract_role(guild_id):
+    cfg = get_config(guild_id)
+    return cfg['contract_role_id'] if cfg else None
+
+def get_recruiter_role(guild_id):
+    cfg = get_config(guild_id)
+    return cfg['recruiter_role_id'] if cfg else None
+
+def get_dv_role(guild_id):
+    cfg = get_config(guild_id)
+    return cfg['dv_role_id'] if cfg else None
+
+def get_log_channel(guild_id):
+    cfg = get_config(guild_id)
+    return cfg['log_channel_id'] if cfg else None
+
+def get_contract_channel(guild_id):
+    cfg = get_config(guild_id)
+    return cfg['contract_channel_id'] if cfg else None
+
+def get_contract_status_channel(guild_id):
+    cfg = get_config(guild_id)
+    return cfg['contract_status_channel_id'] if cfg else None
+
+def get_discipline_roles(guild_id):
+    cfg = get_config(guild_id)
+    if cfg and cfg['discipline_roles']:
+        return json.loads(cfg['discipline_roles'])
+    return {"1":"предупреждение","2":"выговор","warn":"warn"}
+
+def get_discipline_auto_remove(guild_id):
+    cfg = get_config(guild_id)
+    return cfg['discipline_auto_remove'] if cfg else 1
+
+def get_discipline_remove_days(guild_id):
+    cfg = get_config(guild_id)
+    return cfg['discipline_remove_days'] if cfg else 7
+
+def get_org_roles(guild_id):
+    c.execute("SELECT category, org, sub, role_id, cc_role_id FROM org_roles WHERE guild_id=?", (guild_id,))
+    rows = c.fetchall()
+    orgs = {}
+    for cat, org, sub, role_id, cc_role_id in rows:
+        orgs.setdefault(cat, {}).setdefault(org, {})
+        if sub:
+            orgs[cat][org].setdefault("subs", {})[sub] = {"role_id": role_id, "cc_role_id": cc_role_id}
+        else:
+            orgs[cat][org]["role_id"] = role_id
+            orgs[cat][org]["cc_role_id"] = cc_role_id
+    return orgs
+
+async def has_admin(ctx):
+    role_id = get_admin_role(ctx.guild.id)
+    if role_id is None:
+        return ctx.author.guild_permissions.administrator
+    return any(role.id == role_id for role in ctx.author.roles)
+
+async def has_recruiter(ctx):
+    role_id = get_recruiter_role(ctx.guild.id)
+    if role_id is None:
+        return False
+    return any(role.id == role_id for role in ctx.author.roles)
+
+async def has_dv(ctx):
+    role_id = get_dv_role(ctx.guild.id)
+    if role_id is None:
+        return False
+    return any(role.id == role_id for role in ctx.author.roles)
+
+async def has_contract_role(ctx):
+    role_id = get_contract_role(ctx.guild.id)
+    if role_id is None:
+        return False
+    return any(role.id == role_id for role in ctx.author.roles)
+
+async def check_admin(interaction: discord.Interaction):
+    role_id = get_admin_role(interaction.guild.id)
+    if role_id is None:
+        return interaction.user.guild_permissions.administrator
+    return any(role.id == role_id for role in interaction.user.roles)
+
+async def check_recruiter(interaction: discord.Interaction):
+    role_id = get_recruiter_role(interaction.guild.id)
+    if role_id is None:
+        return False
+    return any(role.id == role_id for role in interaction.user.roles)
+
+async def check_dv(interaction: discord.Interaction):
+    role_id = get_dv_role(interaction.guild.id)
+    if role_id is None:
+        return False
+    return any(role.id == role_id for role in interaction.user.roles)
+
+async def check_contract(interaction: discord.Interaction):
+    role_id = get_contract_role(interaction.guild.id)
+    if role_id is None:
+        return False
+    return any(role.id == role_id for role in interaction.user.roles)
+
+def get_family_balance(guild_id):
+    c.execute("SELECT balance FROM bank WHERE guild_id=?", (guild_id,))
+    row = c.fetchone()
+    if not row:
+        c.execute("INSERT INTO bank (guild_id, balance) VALUES (?, 0)", (guild_id,))
+        conn.commit()
+        return 0
+    return row[0]
+
+def get_member_nick(guild_id, user_id):
+    c.execute("SELECT nickname FROM family_members WHERE guild_id=? AND discord_id=?", (guild_id, user_id))
     row = c.fetchone()
     return row[0] if row else None
 
-def get_family_balance():
-    c.execute("SELECT balance FROM bank LIMIT 1")
-    return c.fetchone()[0]
-
-def auto_return():
-    now = datetime.datetime.now().isoformat()
-    c.execute("UPDATE vehicles SET status='свободен', taken_by=NULL, taken_at=NULL, return_at=NULL WHERE status='занят' AND return_at <= ?", (now,))
+def log_action(guild_id, discord_id, nickname, action, details=""):
+    c.execute("INSERT INTO logs (guild_id, discord_id, nickname, action, details, timestamp) VALUES (?,?,?,?,?,?)",
+              (guild_id, discord_id, nickname, action, details, datetime.datetime.now().isoformat()))
     conn.commit()
 
-def log_action(discord_id, nickname, action, details=""):
-    c.execute("INSERT INTO logs (discord_id, nickname, action, details, timestamp) VALUES (?,?,?,?,?)",
-              (discord_id, nickname, action, details, datetime.datetime.now().isoformat()))
-    conn.commit()
+class SetupSession:
+    def __init__(self, bot, user_id):
+        self.bot = bot
+        self.user_id = user_id
+        self.step = 0
+        self.data = {}
+        self.channel = None
 
-def get_discipline_counts(nickname):
-    c.execute("SELECT COUNT(*) FROM disciplinary_actions WHERE nickname=? AND action_type='предупреждение'", (nickname,))
-    warnings = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM disciplinary_actions WHERE nickname=? AND action_type='выговор'", (nickname,))
-    vygs = c.fetchone()[0]
-    return warnings, vygs
+    async def start(self, channel):
+        self.channel = channel
+        await self.ask_guild_id()
 
-async def update_discipline_roles(member, nickname):
-    for role_id in DISC_ROLES:
-        role = member.guild.get_role(role_id)
-        if role and role in member.roles:
-            try: await member.remove_roles(role, reason="Пересчёт наказаний")
-            except: pass
-    warns, vygs = get_discipline_counts(nickname)
-    new_vygs = vygs + warns // 2
-    remaining_warns = warns % 2
-    if warns >= 2:
-        c.execute("DELETE FROM disciplinary_actions WHERE nickname=? AND action_type='предупреждение'", (nickname,))
-        for _ in range(warns // 2):
-            c.execute("INSERT INTO disciplinary_actions (nickname, discord_id, action_type, reason, issued_by, date) VALUES (?,?,?,?,?,?)",
-                      (nickname, member.id, "выговор", "Автоконвертация 2 предупреждений", "Система", datetime.datetime.now().isoformat()))
-        conn.commit()
-        new_vygs = vygs + warns // 2
-        remaining_warns = 0
-    if remaining_warns == 1:
-        role = member.guild.get_role(ROLE_PRED)
-        if role: await member.add_roles(role, reason="Предупреждение")
-    if new_vygs >= 3: role = member.guild.get_role(ROLE_WARN)
-    elif new_vygs == 2: role = member.guild.get_role(ROLE_2VYG)
-    elif new_vygs == 1: role = member.guild.get_role(ROLE_1VYG)
-    else: role = None
-    if role: await member.add_roles(role, reason=f"Выговоры: {new_vygs}")
+    async def ask_guild_id(self):
+        await self.channel.send("Укажите ID сервера (включите режим разработчика и скопируйте ID).")
+        self.step = 1
 
-@bot.event
-async def on_member_update(before, after):
-    log_channel = after.guild.get_channel(SERVER_LOG_CHANNEL_ID) if after.guild else None
-    if log_channel and not after.bot:
-        if before.nick != after.nick:
-            embed = discord.Embed(title="🔄 Смена ника", color=0x3498db, timestamp=datetime.datetime.now())
-            embed.add_field(name="Пользователь", value=after.mention)
-            embed.add_field(name="Было", value=before.nick or before.name)
-            embed.add_field(name="Стало", value=after.nick or after.name)
-            await log_channel.send(embed=embed)
-        added = [role for role in after.roles if role not in before.roles]
-        removed = [role for role in before.roles if role not in after.roles]
-        if added or removed:
-            desc = f"**Пользователь:** {after.mention} ({after.id})\n"
-            if added: desc += "➕ **Выданы роли:** " + ", ".join(role.mention for role in added) + "\n"
-            if removed: desc += "➖ **Сняты роли:** " + ", ".join(role.mention for role in removed) + "\n"
-            embed = discord.Embed(title="🔄 Изменение ролей", description=desc, color=0x3498db, timestamp=datetime.datetime.now())
-            await log_channel.send(embed=embed)
-    role = after.guild.get_role(ROLE_FAMILY_AUTO) if after.guild else None
-    if not role: return
-    had_role = role in before.roles
-    has_role = role in after.roles
-    if not had_role and has_role:
-        c.execute("SELECT 1 FROM family_members WHERE discord_id=?", (after.id,))
-        if c.fetchone() is None:
-            nick = after.display_name.replace(" ", "_")
+    async def handle_message(self, message):
+        if message.author.id != self.user_id:
+            return
+        if self.step == 1:
             try:
-                c.execute("INSERT INTO family_members (nickname, discord_id, joined_at) VALUES (?, ?, ?)", (nick, after.id, datetime.datetime.now().isoformat()))
+                guild_id = int(message.content)
+                guild = self.bot.get_guild(guild_id)
+                if guild is None:
+                    await self.channel.send("Сервер не найден. Бот должен быть на сервере.")
+                    return
+                member = guild.get_member(self.user_id)
+                if member is None or not member.guild_permissions.administrator:
+                    await self.channel.send("Вы не являетесь администратором на этом сервере.")
+                    return
+                self.guild_id = guild_id
+                self.data['guild_id'] = guild_id
+                self.step = 2
+                await self.channel.send("Теперь укажите **ID роли администратора бота**.\nЭта роль получит полный доступ к командам.")
+            except ValueError:
+                await self.channel.send("Неверный формат ID. Попробуйте ещё раз.")
+
+        elif self.step == 2:
+            try:
+                role_id = int(message.content)
+                self.data['admin_role_id'] = role_id
+                self.step = 3
+                await self.channel.send("Укажите **ID роли семьи** (авто-добавление участников).")
+            except ValueError:
+                await self.channel.send("Неверный ID. Введите число.")
+
+        elif self.step == 3:
+            try:
+                role_id = int(message.content)
+                self.data['family_role_id'] = role_id
+                self.step = 4
+                await self.channel.send("Укажите **ID роли рекрутеров** (добавление/удаление из семьи).")
+            except ValueError:
+                await self.channel.send("Неверный ID. Введите число.")
+
+        elif self.step == 4:
+            try:
+                role_id = int(message.content)
+                self.data['recruiter_role_id'] = role_id
+                self.step = 5
+                await self.channel.send("Укажите **ID роли для ДВ** (выдача дисциплинарных взысканий).")
+            except ValueError:
+                await self.channel.send("Неверный ID. Введите число.")
+
+        elif self.step == 5:
+            try:
+                role_id = int(message.content)
+                self.data['dv_role_id'] = role_id
+                self.step = 6
+                await self.channel.send("Укажите **ID роли, которая может ставить ✅ на контракты**.")
+            except ValueError:
+                await self.channel.send("Неверный ID. Введите число.")
+
+        elif self.step == 6:
+            try:
+                role_id = int(message.content)
+                self.data['contract_role_id'] = role_id
+                self.step = 7
+                await self.channel.send("Укажите **ID канала для логов (аудит)**.")
+            except ValueError:
+                await self.channel.send("Неверный ID. Введите число.")
+
+        elif self.step == 7:
+            try:
+                channel_id = int(message.content)
+                self.data['log_channel_id'] = channel_id
+                self.step = 8
+                await self.channel.send("Укажите **ID канала для уведомлений о контрактах** (теги участников).")
+            except ValueError:
+                await self.channel.send("Неверный ID. Введите число.")
+
+        elif self.step == 8:
+            try:
+                channel_id = int(message.content)
+                self.data['contract_channel_id'] = channel_id
+                self.step = 9
+                await self.channel.send("Укажите **ID канала для статусов контрактов** (создание/завершение).")
+            except ValueError:
+                await self.channel.send("Неверный ID. Введите число.")
+
+        elif self.step == 9:
+            try:
+                channel_id = int(message.content)
+                self.data['contract_status_channel_id'] = channel_id
+                self.step = 10
+                await self.channel.send("Настройка завершена! Сохраняем данные...")
+                await self.save_config()
+                await self.channel.send("✅ Бот успешно настроен для сервера! Теперь можно использовать /роль и другие команды.")
+                del sessions[self.user_id]
+            except ValueError:
+                await self.channel.send("Неверный ID. Введите число.")
+
+    async def save_config(self):
+        c.execute('''INSERT OR REPLACE INTO server_config 
+            (guild_id, admin_role_id, family_role_id, contract_role_id, recruiter_role_id, dv_role_id,
+            log_channel_id, contract_channel_id, contract_status_channel_id)
+            VALUES (?,?,?,?,?,?,?,?,?)''',
+            (self.data['guild_id'], self.data['admin_role_id'], self.data['family_role_id'],
+             self.data['contract_role_id'], self.data['recruiter_role_id'], self.data['dv_role_id'],
+             self.data['log_channel_id'], self.data['contract_channel_id'], self.data['contract_status_channel_id']))
+        conn.commit()
+
+class OrgConfigSession:
+    def __init__(self, bot, user_id, guild_id):
+        self.bot = bot
+        self.user_id = user_id
+        self.guild_id = guild_id
+        self.state = "category"
+        self.categories = ["Госс", "Банды", "Мафии"]
+        self.current_category = None
+        self.current_org = None
+        self.current_sub = None
+        self.org_index = 0
+        self.sub_index = 0
+        self.org_list = []
+        self.sub_list = []
+        self.channel = None
+        self.pending_org_data = {}
+
+    async def start(self, channel):
+        self.channel = channel
+        await self.ask_category()
+
+    async def ask_category(self):
+        if self.org_index >= len(self.categories):
+            await self.channel.send("🎉 Настройка организаций завершена!")
+            del org_sessions[self.user_id]
+            return
+        self.current_category = self.categories[self.org_index]
+        self.state = "category"
+        self.org_list = list(self.get_orgs_for_category(self.current_category).keys())
+        self.org_index = 0
+        self.sub_index = 0
+        await self.channel.send(f"Начинаем настройку **{self.current_category}**. Сколько организаций в этой категории? Введите число.")
+        self.state = "org_count"
+
+    async def handle_message(self, message):
+        if message.author.id != self.user_id:
+            return
+        content = message.content.strip()
+
+        if self.state == "org_count":
+            try:
+                count = int(content)
+                self.org_count = count
+                self.state = "org_name"
+                self.org_names = []
+                self.org_index = 0
+                await self.channel.send("Введите название первой организации.")
+            except ValueError:
+                await self.channel.send("Введите число.")
+
+        elif self.state == "org_name":
+            self.current_org_name = content
+            self.state = "org_role"
+            await self.channel.send(f"Введите ID роли для **{self.current_org_name}**.")
+
+        elif self.state == "org_role":
+            try:
+                role_id = int(content)
+                self.current_role_id = role_id
+                self.state = "org_cc_role"
+                await self.channel.send(f"Введите ID CC-роли для **{self.current_org_name}** (или 0, если нет).")
+            except ValueError:
+                await self.channel.send("Введите число.")
+
+        elif self.state == "org_cc_role":
+            try:
+                cc_role_id = int(content)
+                self.state = "has_subs"
+                self.pending_org_data[self.current_org_name] = {
+                    "role_id": self.current_role_id,
+                    "cc_role_id": cc_role_id
+                }
+                await self.channel.send(f"Есть ли у **{self.current_org_name}** подразделения? (да/нет)")
+            except ValueError:
+                await self.channel.send("Введите число.")
+
+        elif self.state == "has_subs":
+            if content.lower() in ("да", "yes", "y"):
+                self.state = "sub_count"
+                await self.channel.send("Сколько подразделений? Введите число.")
+            else:
+                self.org_index += 1
+                if self.org_index < self.org_count:
+                    self.state = "org_name"
+                    await self.channel.send("Введите название следующей организации.")
+                else:
+                    self.org_index = 0
+                    self.categories.pop(0) if self.categories else None
+                    await self.ask_category()
+
+        elif self.state == "sub_count":
+            try:
+                sub_count = int(content)
+                self.sub_count = sub_count
+                self.sub_index = 0
+                self.state = "sub_name"
+                await self.channel.send("Введите название первого подразделения.")
+            except ValueError:
+                await self.channel.send("Введите число.")
+
+        elif self.state == "sub_name":
+            self.current_sub_name = content
+            self.state = "sub_role"
+            await self.channel.send(f"Введите ID роли для подразделения **{self.current_sub_name}**.")
+
+        elif self.state == "sub_role":
+            try:
+                sub_role_id = int(content)
+                self.current_sub_role_id = sub_role_id
+                self.state = "sub_cc_role"
+                await self.channel.send(f"Введите ID CC-роли для подразделения **{self.current_sub_name}** (или 0, если нет).")
+            except ValueError:
+                await self.channel.send("Введите число.")
+
+        elif self.state == "sub_cc_role":
+            try:
+                sub_cc_role_id = int(content)
+                c.execute("INSERT OR REPLACE INTO org_roles (guild_id, category, org, sub, role_id, cc_role_id) VALUES (?,?,?,?,?,?)",
+                          (self.guild_id, self.current_category, self.current_org_name, self.current_sub_name, self.current_sub_role_id, sub_cc_role_id))
                 conn.commit()
-                log_action(after.id, nick, "Авто-добавление в семью", f"Роль {role.name}")
-            except: pass
-    elif had_role and not has_role:
-        c.execute("DELETE FROM family_members WHERE discord_id=?", (after.id,))
-        if c.rowcount > 0:
-            conn.commit()
-            log_action(after.id, after.display_name, "Авто-удаление из семьи", f"Роль {role.name} снята")
+                self.sub_index += 1
+                if self.sub_index < self.sub_count:
+                    self.state = "sub_name"
+                    await self.channel.send(f"Введите название следующего подразделения.")
+                else:
+                    self.org_index += 1
+                    if self.org_index < self.org_count:
+                        self.state = "org_name"
+                        await self.channel.send("Введите название следующей организации.")
+                    else:
+                        self.org_index = 0
+                        self.categories.pop(0) if self.categories else None
+                        await self.ask_category()
+            except ValueError:
+                await self.channel.send("Введите число.")
 
-@bot.event
-async def on_voice_state_update(member, before, after):
-    log_channel = member.guild.get_channel(SERVER_LOG_CHANNEL_ID) if member.guild else None
-    if not log_channel or member.bot: return
-    if before.channel is None and after.channel is not None:
-        embed = discord.Embed(title="🔊 Зашёл в голосовой канал", color=0x2ecc71, timestamp=datetime.datetime.now())
-        embed.add_field(name="Пользователь", value=member.mention)
-        embed.add_field(name="Канал", value=after.channel.name)
-        await log_channel.send(embed=embed)
-    elif before.channel is not None and after.channel is None:
-        embed = discord.Embed(title="🔇 Вышел из голосового канала", color=0xe74c3c, timestamp=datetime.datetime.now())
-        embed.add_field(name="Пользователь", value=member.mention)
-        embed.add_field(name="Канал", value=before.channel.name)
-        await log_channel.send(embed=embed)
-    elif before.channel != after.channel:
-        embed = discord.Embed(title="🔄 Переместился в голосовой канал", color=0x3498db, timestamp=datetime.datetime.now())
-        embed.add_field(name="Пользователь", value=member.mention)
-        embed.add_field(name="Из", value=before.channel.name)
-        embed.add_field(name="В", value=after.channel.name)
-        await log_channel.send(embed=embed)
+    def get_orgs_for_category(self, category):
+        return {}
 
-@bot.event
-async def on_message_delete(message):
-    if message.author.bot: return
-    log_channel = message.guild.get_channel(SERVER_LOG_CHANNEL_ID)
-    if not log_channel: return
-    embed = discord.Embed(title="🗑️ Сообщение удалено", color=0xe74c3c, timestamp=datetime.datetime.now())
-    embed.add_field(name="Автор", value=message.author.mention)
-    embed.add_field(name="Канал", value=message.channel.mention)
-    embed.add_field(name="Содержание", value=message.content[:1024] if message.content else "*Вложение*", inline=False)
-    await log_channel.send(embed=embed)
+class RoleSelectView(View):
+    def __init__(self, user_id, guild_id):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        self.guild_id = guild_id
+        self.org_data = get_org_roles(guild_id)
+        self.current_category = None
+        self.selected_org = None
+        self.selected_sub = None
+        self.step = "main"
 
-@bot.event
-async def on_member_ban(guild, user):
-    log_channel = guild.get_channel(SERVER_LOG_CHANNEL_ID)
-    if log_channel:
-        embed = discord.Embed(title="🔨 Бан участника", color=0xe74c3c, timestamp=datetime.datetime.now())
-        embed.add_field(name="Пользователь", value=user.mention)
-        embed.add_field(name="ID", value=user.id)
-        await log_channel.send(embed=embed)
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Это не ваше меню!", ephemeral=True)
+            return False
+        return True
 
-@bot.event
-async def on_member_kick(guild, user):
-    log_channel = guild.get_channel(SERVER_LOG_CHANNEL_ID)
-    if log_channel:
-        embed = discord.Embed(title="🥾 Кик участника", color=0xe74c3c, timestamp=datetime.datetime.now())
-        embed.add_field(name="Пользователь", value=user.mention)
-        embed.add_field(name="ID", value=user.id)
-        await log_channel.send(embed=embed)
+    def build_main_menu(self):
+        self.clear_items()
+        self.step = "main"
+        categories = list(self.org_data.keys())
+        if not categories:
+            self.add_item(Button(label="Нет настроенных организаций", disabled=True, style=discord.ButtonStyle.secondary))
+            return
+        options = [discord.SelectOption(label=cat) for cat in categories]
+        select = Select(placeholder="Выберите категорию", options=options, custom_id="main_category")
+        select.callback = self.category_select
+        self.add_item(select)
+
+    async def category_select(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        self.current_category = interaction.data['values'][0]
+        self.step = "org"
+        self.clear_items()
+        orgs = list(self.org_data[self.current_category].keys())
+        options = [discord.SelectOption(label=org) for org in orgs]
+        select = Select(placeholder=f"Выберите организацию ({self.current_category})", options=options, custom_id="org_select")
+        select.callback = self.org_select
+        self.add_item(select)
+        back_btn = Button(label="Назад", style=discord.ButtonStyle.secondary, custom_id="back_to_main")
+        back_btn.callback = self.back_to_main
+        self.add_item(back_btn)
+        await interaction.edit_original_response(view=self)
+
+    async def org_select(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        self.selected_org = interaction.data['values'][0]
+        org_info = self.org_data[self.current_category][self.selected_org]
+        if "subs" in org_info and org_info["subs"]:
+            self.step = "sub"
+            self.clear_items()
+            subs = list(org_info["subs"].keys())
+            options = [discord.SelectOption(label=s) for s in subs]
+            select = Select(placeholder="Выберите подразделение", options=options, custom_id="sub_select")
+            select.callback = self.sub_select
+            self.add_item(select)
+            back_btn = Button(label="Назад", style=discord.ButtonStyle.secondary, custom_id="back_to_org")
+            back_btn.callback = self.back_to_org
+            self.add_item(back_btn)
+            await interaction.edit_original_response(view=self)
+        else:
+            await self.assign_role(interaction, org_info["role_id"], org_info.get("cc_role_id"))
+
+    async def sub_select(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        self.selected_sub = interaction.data['values'][0]
+        sub_info = self.org_data[self.current_category][self.selected_org]["subs"][self.selected_sub]
+        await self.assign_role(interaction, sub_info["role_id"], sub_info.get("cc_role_id"))
+
+    async def assign_role(self, interaction, role_id, cc_role_id=None):
+        member = interaction.guild.get_member(self.user_id)
+        if not member:
+            await interaction.followup.send("Пользователь не найден.", ephemeral=True)
+            return
+        role = interaction.guild.get_role(role_id)
+        if not role:
+            await interaction.followup.send("Роль не найдена.", ephemeral=True)
+            return
+        if role in member.roles:
+            await member.remove_roles(role, reason="Самостоятельное снятие")
+            action_main = "снята"
+        else:
+            await member.add_roles(role, reason="Самостоятельный выбор")
+            action_main = "выдана"
+        cc_msg = ""
+        if cc_role_id and cc_role_id != 0:
+            cc_role = interaction.guild.get_role(cc_role_id)
+            if cc_role:
+                if cc_role in member.roles:
+                    await member.remove_roles(cc_role, reason="Снятие CC")
+                    cc_msg = "; CC снята"
+                else:
+                    await member.add_roles(cc_role, reason="Выдача CC")
+                    cc_msg = "; CC выдана"
+        self.clear_items()
+        await interaction.followup.send(f"✅ Роль **{role.name}** {action_main}.{cc_msg}", ephemeral=True)
+        self.stop()
+
+    async def back_to_main(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        self.build_main_menu()
+        await interaction.edit_original_response(view=self)
+
+    async def back_to_org(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        self.step = "org"
+        self.clear_items()
+        orgs = list(self.org_data[self.current_category].keys())
+        options = [discord.SelectOption(label=org) for org in orgs]
+        select = Select(placeholder=f"Выберите организацию ({self.current_category})", options=options, custom_id="org_select2")
+        select.callback = self.org_select
+        self.add_item(select)
+        back_btn = Button(label="Назад", style=discord.ButtonStyle.secondary, custom_id="back_to_main")
+        back_btn.callback = self.back_to_main
+        self.add_item(back_btn)
+        await interaction.edit_original_response(view=self)
+
+@bot.tree.command(name="роль", description="Выбрать или снять роль организации")
+async def role_select(interaction: discord.Interaction):
+    view = RoleSelectView(interaction.user.id, interaction.guild.id)
+    view.build_main_menu()
+    embed = discord.Embed(title="🏢 Выбор роли", description="Сначала выберите категорию, затем организацию. Если у вас уже есть роль, она будет снята.", color=0x2ecc71)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+@bot.tree.command(name="setup", description="Настроить бота (только в ЛС)")
+async def setup(interaction: discord.Interaction):
+    if not isinstance(interaction.channel, discord.DMChannel):
+        return await interaction.response.send_message("Эту команду нужно выполнять в личных сообщениях бота.", ephemeral=True)
+    if interaction.user.id in sessions:
+        return await interaction.response.send_message("У вас уже есть активная сессия настройки.", ephemeral=True)
+    session = SetupSession(bot, interaction.user.id)
+    await session.start(interaction.channel)
+    sessions[interaction.user.id] = session
+
+@bot.tree.command(name="orgconfig", description="Настроить роли организаций (только в ЛС)")
+async def orgconfig(interaction: discord.Interaction):
+    if not isinstance(interaction.channel, discord.DMChannel):
+        return await interaction.response.send_message("Эту команду нужно выполнять в личных сообщениях бота.", ephemeral=True)
+    if interaction.user.id in org_sessions:
+        return await interaction.response.send_message("У вас уже есть активная настройка организаций.", ephemeral=True)
+    await interaction.response.send_message("Укажите ID сервера для настройки организаций.")
+    org_sessions[interaction.user.id] = {"state": "guild_id", "user_id": interaction.user.id}
+    # Сохраним объект сессии позже, когда получим guild_id
 
 @bot.event
 async def on_message(message):
-    if message.author.bot: return
-    content = message.content.lower()
-    if profanity.contains_profanity(content):
-        await message.delete()
-        await message.channel.send(f"{message.author.mention}, ваше сообщение удалено за использование запрещённого слова.", delete_after=10)
-        log_channel = message.guild.get_channel(SERVER_LOG_CHANNEL_ID)
-        if log_channel:
-            embed = discord.Embed(title="🚫 Модерация слов", color=0xe74c3c, timestamp=datetime.datetime.now())
-            embed.add_field(name="Пользователь", value=message.author.mention)
-            embed.add_field(name="Канал", value=message.channel.mention)
-            embed.add_field(name="Содержание", value=message.content[:500])
-            await log_channel.send(embed=embed)
+    if message.author.bot:
         return
-    for word in BAD_WORDS:
-        if re.search(rf'\b{word}\b', content):
+    if message.author.id in sessions:
+        await sessions[message.author.id].handle_message(message)
+        return
+    if message.author.id in org_sessions:
+        session_data = org_sessions[message.author.id]
+        if session_data["state"] == "guild_id":
+            try:
+                guild_id = int(message.content)
+                guild = bot.get_guild(guild_id)
+                if guild is None:
+                    await message.channel.send("Сервер не найден.")
+                    return
+                member = guild.get_member(message.author.id)
+                if member is None or not member.guild_permissions.administrator:
+                    await message.channel.send("Вы не администратор этого сервера.")
+                    return
+                session = OrgConfigSession(bot, message.author.id, guild_id)
+                await session.start(message.channel)
+                org_sessions[message.author.id] = session
+            except ValueError:
+                await message.channel.send("Неверный ID сервера.")
+            return
+        elif isinstance(session_data, OrgConfigSession):
+            await session_data.handle_message(message)
+            return
+    content = message.content.lower()
+    if message.guild and message.channel.id != get_log_channel(message.guild.id):
+        if profanity.contains_profanity(content):
             await message.delete()
             await message.channel.send(f"{message.author.mention}, ваше сообщение удалено за использование запрещённого слова.", delete_after=10)
-            log_channel = message.guild.get_channel(SERVER_LOG_CHANNEL_ID)
-            if log_channel:
-                embed = discord.Embed(title="🚫 Модерация слов", color=0xe74c3c, timestamp=datetime.datetime.now())
-                embed.add_field(name="Пользователь", value=message.author.mention)
-                embed.add_field(name="Канал", value=message.channel.mention)
-                embed.add_field(name="Содержание", value=message.content[:500])
-                await log_channel.send(embed=embed)
-            break
+            return
+        for word in BAD_WORDS:
+            if re.search(rf'\b{word}\b', content):
+                await message.delete()
+                await message.channel.send(f"{message.author.mention}, ваше сообщение удалено за использование запрещённого слова.", delete_after=10)
+                return
     await bot.process_commands(message)
 
-@tasks.loop(minutes=10)
-async def update_all_nicknames():
-    c.execute("SELECT discord_id, nickname FROM family_members")
-    rows = c.fetchall()
-    guild = bot.guilds[0] if bot.guilds else None
-    if not guild: return
-    for disc_id, old_nick in rows:
-        member = guild.get_member(disc_id)
-        if member:
-            new_nick = member.display_name.replace(" ", "_")
-            if new_nick != old_nick:
-                c.execute("UPDATE family_members SET nickname=? WHERE discord_id=?", (new_nick, disc_id))
-                conn.commit()
-
-@tasks.loop(hours=1)
-async def auto_remove_expired_discipline():
-    cutoff = (datetime.datetime.now() - datetime.timedelta(days=7)).isoformat()
-    c.execute("DELETE FROM disciplinary_actions WHERE date <= ?", (cutoff,))
-    if c.rowcount > 0:
-        conn.commit()
-        guild = bot.guilds[0] if bot.guilds else None
-        if guild:
-            c.execute("SELECT DISTINCT discord_id, nickname FROM disciplinary_actions")
-            for disc_id, nick in c.fetchall():
-                member = guild.get_member(disc_id)
-                if member: await update_discipline_roles(member, nick)
-
-@tasks.loop(hours=1)
-async def contract_reminders():
-    now = datetime.datetime.now()
-    c.execute("SELECT id, title, participants, due_date, notified_hours, message_id, started_at FROM contracts WHERE status='в процессе'")
-    contracts = c.fetchall()
-    guild = bot.guilds[0] if bot.guilds else None
-    if not guild: return
-    channel = guild.get_channel(CONTRACT_CHANNEL_ID)
-    status_channel = guild.get_channel(CONTRACT_STATUS_CHANNEL_ID)
-    if not channel: return
-    for cid, title, participants, due_str, notified, msg_id, started_str in contracts:
-        try:
-            due_date = datetime.datetime.fromisoformat(due_str)
-            started_at = datetime.datetime.fromisoformat(started_str) if started_str else None
-        except: continue
-        if due_date > now:
-            if started_at:
-                elapsed = now - started_at
-                hours_passed = int(elapsed.total_seconds() // 3600)
-            else: hours_passed = 0
-            participants_mentions = ', '.join([f'<@{p.strip()}>' for p in participants.split(',') if p.strip().isdigit()])
-            c.execute("UPDATE contracts SET notified_hours = notified_hours + 1 WHERE id=?", (cid,))
-            conn.commit()
-            await channel.send(f'{participants_mentions} У ВАС ИДЕТ КОНТРАКТ прошло: {hours_passed} ч.')
-        else:
-            c.execute("UPDATE contracts SET status='выполнен' WHERE id=?", (cid,))
-            conn.commit()
-            participants_mentions = ', '.join([f'<@{p.strip()}>' for p in participants.split(',') if p.strip().isdigit()])
-            if status_channel:
-                embed = discord.Embed(title=f"✅ Контракт «{title}» выполнен", description="Время выполнения истекло.", color=0x2ecc71)
-                embed.add_field(name="Участники", value=participants_mentions or "Не указаны")
-                embed.add_field(name="Дедлайн", value=due_date.strftime("%d.%m.%Y %H:%M"))
-                await status_channel.send(embed=embed)
-
-@bot.event
-async def on_raw_reaction_add(payload):
-    if payload.emoji.name != '✅' or payload.channel_id != CONTRACT_STATUS_CHANNEL_ID: return
-    guild = bot.get_guild(payload.guild_id)
-    if guild is None: return
-    member = guild.get_member(payload.user_id)
-    if member is None or member.bot: return
-    if not any(role.id == CONTRACT_NOTIFY_ROLE_ID for role in member.roles): return
-    c.execute("SELECT id, status FROM contracts WHERE message_id=?", (payload.message_id,))
-    row = c.fetchone()
-    if row and row[1] == 'создан':
-        now = datetime.datetime.now()
-        c.execute("UPDATE contracts SET status='в процессе', started_at=? WHERE id=?", (now.isoformat(), row[0]))
-        conn.commit()
-        c.execute("SELECT title, participants, message_id FROM contracts WHERE id=?", (row[0],))
-        contract = c.fetchone()
-        if contract:
-            title, participants, msg_id = contract
-            participants_mentions = ', '.join([f'<@{p.strip()}>' for p in participants.split(',') if p.strip().isdigit()])
-            notify_channel = guild.get_channel(CONTRACT_CHANNEL_ID)
-            if notify_channel:
-                await notify_channel.send(f"{participants_mentions} Ваш контракт начал выполняться!")
-        channel = bot.get_channel(payload.channel_id)
-        if channel: await channel.send(f"✅ Контракт (ID {row[0]}) принят к выполнению.")
-
-@bot.event
-async def on_ready():
-    print(f"Бот {bot.user} готов!")
-    update_all_nicknames.start()
-    auto_remove_expired_discipline.start()
-    contract_reminders.start()
-
-def has_role(ctx, *role_names):
-    return any(role.name.lower() in [name.lower() for name in role_names] for role in ctx.author.roles)
-
-@bot.tree.command(name="хелп", description="Помощь по боту", guild=GUILD_ID)
+@bot.tree.command(name="хелп", description="Помощь по боту")
 async def help_cmd(interaction: discord.Interaction):
     embed = discord.Embed(title="✨ Помощь по боту", color=0x9b59b6)
-    embed.add_field(name="👥 Семья", value="/дсемья ID Ник — добавить\n/усемья ID — удалить\n/семья", inline=False)
-    embed.add_field(name="🚗 Авто", value="/давто Модель Госномер\n/уавто Госномер\n/авто — список\n/взавто Номер [часы]\n/веавто Номер", inline=False)
+    embed.add_field(name="👥 Семья", value="/дсемья ID Ник\n/усемья ID\n/семья", inline=False)
+    embed.add_field(name="🚗 Авто", value="/давто Модель Госномер\n/уавто Госномер\n/авто\n/взавто Номер [часы]\n/веавто Номер", inline=False)
     embed.add_field(name="📦 Склад", value="/склад [Категория]\n/псклад Предмет Категория Кол-во\n/всклад Предмет Кол-во", inline=False)
-    embed.add_field(name="💰 Банк", value="/банк — баланс\n/пополнить Сумма [Причина] (скриншот обязателен)\n/снять Сумма [Причина]", inline=False)
+    embed.add_field(name="💰 Банк", value="/банк\n/пополнить Сумма [Причина] (скриншот обязателен)\n/снять Сумма [Причина]", inline=False)
     embed.add_field(name="📝 Контракты", value="/вк @Участники Название ДД.ММ.ГГГГ ЧЧ:ММ [векселя]", inline=False)
     embed.add_field(name="⚠️ Дисциплина", value="/дв @Участники Тип Причина\n/выг [@Участник]\n/снятьдв @Участник Причина", inline=False)
     embed.add_field(name="📋 Логи", value="/logs [@Участник]", inline=False)
-    embed.add_field(name="💾 Бекап", value="/backup\n/restore\n/reset_contracts", inline=False)
-    embed.add_field(name="🎮 Игры", value="/игра — запустить мини-игру (змейка, сапёр)", inline=False)
+    embed.add_field(name="🛠️ Настройка", value="/setup в ЛС\n/orgconfig в ЛС", inline=False)
+    embed.add_field(name="🏢 Роли", value="/роль", inline=False)
+    embed.add_field(name="🎮 Игры", value="/игра", inline=False)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="backup", description="Сохранить базу данных", guild=GUILD_ID)
-@app_commands.checks.has_any_role(ASSISTANT_ROLE, SUPER_ADMIN_ROLE)
-async def backup_db(interaction: discord.Interaction):
-    if not os.path.exists(DB_PATH):
-        await interaction.response.send_message("❌ База данных не найдена.", ephemeral=True); return
-    file = discord.File(DB_PATH, filename="gta_rp.db")
-    await interaction.response.send_message("📦 Бекап базы данных:", file=file, ephemeral=True)
+@bot.tree.command(name="банк", description="Баланс семьи")
+async def bank_balance(interaction: discord.Interaction):
+    if not await check_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
+    balance = get_family_balance(interaction.guild.id)
+    await interaction.response.send_message(f'💰 Баланс семьи: {balance}')
 
-@bot.tree.command(name="restore", description="Восстановить базу данных", guild=GUILD_ID)
-@app_commands.checks.has_any_role(ASSISTANT_ROLE, SUPER_ADMIN_ROLE)
-async def restore_db(interaction: discord.Interaction, файл: discord.Attachment):
-    if not файл.filename.endswith('.db'):
-        await interaction.response.send_message("❌ Файл должен иметь расширение .db."); return
-    if os.path.exists(DB_PATH):
-        os.rename(DB_PATH, DB_PATH + '.backup')
-    try:
-        await файл.save(DB_PATH)
-        global conn, c
-        conn.close()
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        update_all_nicknames.restart()
-        auto_remove_expired_discipline.restart()
-        contract_reminders.restart()
-        await interaction.response.send_message("✅ База данных восстановлена.")
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Ошибка восстановления: {e}")
-        if os.path.exists(DB_PATH + '.backup'):
-            os.rename(DB_PATH + '.backup', DB_PATH)
-
-@bot.tree.command(name="reset_contracts", description="Исправить таблицу контрактов", guild=GUILD_ID)
-@app_commands.checks.has_any_role(ASSISTANT_ROLE, SUPER_ADMIN_ROLE)
-async def reset_contracts(interaction: discord.Interaction):
-    c.execute("DROP TABLE IF EXISTS contracts")
-    c.execute('''CREATE TABLE contracts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT,
-        participants TEXT,
-        due_date TEXT,
-        bills INTEGER DEFAULT 0,
-        created_by TEXT,
-        created_at TEXT,
-        status TEXT DEFAULT 'создан',
-        message_id INTEGER,
-        notified_hours INTEGER DEFAULT 0,
-        started_at TEXT
-    )''')
+@bot.tree.command(name="пополнить", description="Пополнить семейный банк (скриншот обязателен)")
+async def bank_add(interaction: discord.Interaction, сумма: int, причина: str = "", скриншот: discord.Attachment = None):
+    if not await check_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
+    if скриншот is None:
+        return await interaction.response.send_message("❌ Необходимо прикрепить скриншот.", ephemeral=True)
+    if сумма <= 0:
+        return await interaction.response.send_message("❌ Сумма должна быть положительной.", ephemeral=True)
+    nick = get_member_nick(interaction.guild.id, interaction.user.id)
+    if not nick:
+        return await interaction.response.send_message("❌ Вы не привязаны к семье. Используйте /дсемья.", ephemeral=True)
+    nick = nick.replace("_", " ")
+    c.execute("UPDATE bank SET balance = balance + ? WHERE guild_id=?", (сумма, interaction.guild.id))
+    if c.rowcount == 0:
+        c.execute("INSERT INTO bank (guild_id, balance) VALUES (?, ?)", (interaction.guild.id, сумма))
     conn.commit()
-    await interaction.response.send_message("✅ Таблица контрактов исправлена. Можете пользоваться `/вк`.")
+    new_balance = get_family_balance(interaction.guild.id)
+    log_action(interaction.guild.id, interaction.user.id, nick, "Пополнение банка", f"+{сумма}, причина: {причина}")
+    file = discord.File(await скриншот.read(), filename=скриншот.filename)
+    await interaction.response.send_message(f'💰 Счёт семьи пополнен на {сумма} (от {nick}). Баланс: {new_balance}.', file=file)
 
-@bot.tree.command(name="id", description="Узнать Discord ID", guild=GUILD_ID)
-@app_commands.checks.has_any_role(RECRUITER_ROLE, SUPER_ADMIN_ROLE)
-async def get_id(interaction: discord.Interaction, пользователь: discord.Member = None):
-    member = пользователь or interaction.user
-    await interaction.response.send_message(f'🆔 {member.mention}: `{member.id}`')
+@bot.tree.command(name="снять", description="Снять деньги из семейного банка")
+async def bank_remove(interaction: discord.Interaction, сумма: int, причина: str = ""):
+    if not await check_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
+    if сумма <= 0:
+        return await interaction.response.send_message("❌ Сумма должна быть положительной.", ephemeral=True)
+    nick = get_member_nick(interaction.guild.id, interaction.user.id)
+    if not nick:
+        return await interaction.response.send_message("❌ Вы не привязаны к семье. Используйте /дсемья.", ephemeral=True)
+    nick = nick.replace("_", " ")
+    balance = get_family_balance(interaction.guild.id)
+    if balance < сумма:
+        return await interaction.response.send_message(f"❌ Недостаточно средств. Баланс: {balance}.", ephemeral=True)
+    c.execute("UPDATE bank SET balance = balance - ? WHERE guild_id=?", (сумма, interaction.guild.id))
+    conn.commit()
+    new_balance = get_family_balance(interaction.guild.id)
+    log_action(interaction.guild.id, interaction.user.id, nick, "Снятие с банка", f"-{сумма}, причина: {причина}")
+    await interaction.response.send_message(f"💸 Из бюджета семьи снято {сумма} (от {nick}). Баланс: {new_balance}.")
 
-@bot.tree.command(name="дсемья", description="Добавить участника в семью", guild=GUILD_ID)
-@app_commands.checks.has_any_role(RECRUITER_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="дсемья", description="Добавить участника в семью")
 async def add_family(interaction: discord.Interaction, discord_id: str, никнейм: str):
-    try: disc_id = int(discord_id)
+    if not await check_admin(interaction) and not await check_recruiter(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
+    try:
+        disc_id = int(discord_id)
     except ValueError:
-        await interaction.response.send_message("❌ Неверный формат ID."); return
+        return await interaction.response.send_message("❌ Неверный формат ID.", ephemeral=True)
     никнейм = никнейм.replace("_", " ")
-    c.execute("SELECT * FROM family_members WHERE discord_id=?", (disc_id,))
+    c.execute("SELECT * FROM family_members WHERE guild_id=? AND discord_id=?", (interaction.guild.id, disc_id))
     if c.fetchone():
-        await interaction.response.send_message(f'⚠️ Пользователь с ID `{disc_id}` уже в семье.'); return
-    c.execute("SELECT * FROM family_members WHERE nickname=?", (никнейм,))
+        return await interaction.response.send_message(f'⚠️ Пользователь с ID `{disc_id}` уже в семье.', ephemeral=True)
+    c.execute("SELECT * FROM family_members WHERE guild_id=? AND nickname=?", (interaction.guild.id, никнейм))
     if c.fetchone():
-        await interaction.response.send_message(f'⚠️ Ник `{никнейм}` уже занят.'); return
-    c.execute("INSERT INTO family_members (nickname, discord_id, joined_at) VALUES (?, ?, ?)", (никнейм, disc_id, datetime.datetime.now().isoformat()))
+        return await interaction.response.send_message(f'⚠️ Ник `{никнейм}` уже занят.', ephemeral=True)
+    c.execute("INSERT INTO family_members (guild_id, nickname, discord_id, joined_at) VALUES (?,?,?,?)",
+              (interaction.guild.id, никнейм, disc_id, datetime.datetime.now().isoformat()))
     conn.commit()
-    log_action(interaction.user.id, get_member_nick(interaction.user.id) or str(interaction.user), "Добавление в семью", f"Добавлен {никнейм} ({disc_id})")
-    await interaction.response.send_message(f'✅ <@{disc_id}> (`{никнейм}`) добавлен в семью.')
+    log_action(interaction.guild.id, interaction.user.id, get_member_nick(interaction.guild.id, interaction.user.id) or str(interaction.user),
+               "Добавление в семью", f"Добавлен {никнейм} ({disc_id})")
+    await interaction.response.send_message(f'✅ <@{disc_id}> (`{никнейм}`) добавлен в семью.', ephemeral=True)
 
-@bot.tree.command(name="усемья", description="Удалить участника из семьи", guild=GUILD_ID)
-@app_commands.checks.has_any_role(ASSISTANT_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="усемья", description="Удалить участника из семьи")
 async def remove_family(interaction: discord.Interaction, discord_id: str):
-    try: disc_id = int(discord_id)
+    if not await check_admin(interaction) and not await check_recruiter(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
+    try:
+        disc_id = int(discord_id)
     except ValueError:
-        await interaction.response.send_message("❌ Неверный формат ID."); return
-    c.execute("SELECT nickname FROM family_members WHERE discord_id=?", (disc_id,))
+        return await interaction.response.send_message("❌ Неверный формат ID.", ephemeral=True)
+    c.execute("SELECT nickname FROM family_members WHERE guild_id=? AND discord_id=?", (interaction.guild.id, disc_id))
     row = c.fetchone()
     if not row:
-        await interaction.response.send_message(f'❌ Пользователь с ID `{disc_id}` не найден в семье.'); return
+        return await interaction.response.send_message(f'❌ Пользователь с ID `{disc_id}` не найден в семье.', ephemeral=True)
     nickname = row[0]
-    c.execute("DELETE FROM family_members WHERE discord_id=?", (disc_id,))
+    c.execute("DELETE FROM family_members WHERE guild_id=? AND discord_id=?", (interaction.guild.id, disc_id))
     conn.commit()
-    log_action(interaction.user.id, get_member_nick(interaction.user.id) or str(interaction.user), "Удаление из семьи", f"Удалён {nickname} ({disc_id})")
-    await interaction.response.send_message(f'✅ <@{disc_id}> (`{nickname}`) удалён из семьи.')
+    log_action(interaction.guild.id, interaction.user.id, get_member_nick(interaction.guild.id, interaction.user.id) or str(interaction.user),
+               "Удаление из семьи", f"Удалён {nickname} ({disc_id})")
+    await interaction.response.send_message(f'✅ <@{disc_id}> (`{nickname}`) удалён из семьи.', ephemeral=True)
 
-@bot.tree.command(name="семья", description="Список членов семьи", guild=GUILD_ID)
-@app_commands.checks.has_any_role(RECRUITER_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="семья", description="Список членов семьи")
 async def family_list(interaction: discord.Interaction):
-    c.execute("SELECT nickname, discord_id FROM family_members")
+    c.execute("SELECT nickname, discord_id FROM family_members WHERE guild_id=?", (interaction.guild.id,))
     rows = c.fetchall()
     if not rows:
-        await interaction.response.send_message('👪 Семья пуста.'); return
+        return await interaction.response.send_message('👪 Семья пуста.', ephemeral=True)
     lines = [f'<@{disc_id}> — `{nick}`' for nick, disc_id in rows]
     embed = discord.Embed(title='👥 Семья', description='\n'.join(lines), color=0x00ff00)
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="давто", description="Добавить автомобиль", guild=GUILD_ID)
-@app_commands.checks.has_any_role(ASSISTANT_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="давто", description="Добавить автомобиль")
 async def add_car(interaction: discord.Interaction, модель: str, госномер: str):
-    nick = get_member_nick(interaction.user.id)
+    if not await check_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
+    nick = get_member_nick(interaction.guild.id, interaction.user.id)
     if not nick:
-        await interaction.response.send_message('❌ Вы не привязаны к семье. Сначала добавьте себя через /дсемья.'); return
+        return await interaction.response.send_message('❌ Вы не привязаны к семье. Сначала добавьте себя через /дсемья.', ephemeral=True)
     nick = nick.replace("_", " ")
     try:
-        c.execute("INSERT INTO vehicles (owner_nick, model, plate) VALUES (?, ?, ?)", (nick, модель, госномер))
+        c.execute("INSERT INTO vehicles (guild_id, owner_nick, model, plate) VALUES (?,?,?,?)",
+                  (interaction.guild.id, nick, модель, госномер))
         conn.commit()
         car_id = c.lastrowid
-        log_action(interaction.user.id, nick, "Добавление авто", f"Модель {модель}, госномер {госномер}")
-        await interaction.response.send_message(f'🚗 {модель} ({госномер}) добавлен, номер {car_id}. Владелец: `{nick}`.')
+        log_action(interaction.guild.id, interaction.user.id, nick, "Добавление авто", f"Модель {модель}, госномер {госномер}")
+        await interaction.response.send_message(f'🚗 {модель} ({госномер}) добавлен, номер {car_id}. Владелец: `{nick}`.', ephemeral=True)
     except sqlite3.IntegrityError:
-        await interaction.response.send_message(f'❌ Госномер `{госномер}` уже существует.')
+        await interaction.response.send_message(f'❌ Госномер `{госномер}` уже существует.', ephemeral=True)
 
-@bot.tree.command(name="уавто", description="Удалить автомобиль", guild=GUILD_ID)
-@app_commands.checks.has_any_role(ASSISTANT_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="уавто", description="Удалить автомобиль")
 async def remove_car(interaction: discord.Interaction, госномер: str):
-    c.execute("DELETE FROM vehicles WHERE plate=?", (госномер,))
+    if not await check_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
+    c.execute("DELETE FROM vehicles WHERE guild_id=? AND plate=?", (interaction.guild.id, госномер))
     if c.rowcount == 0:
-        await interaction.response.send_message(f'❌ Машина с госномером `{госномер}` не найдена.'); return
+        return await interaction.response.send_message(f'❌ Машина с госномером `{госномер}` не найдена.', ephemeral=True)
     conn.commit()
-    log_action(interaction.user.id, get_member_nick(interaction.user.id) or str(interaction.user), "Удаление авто", f"Госномер {госномер}")
-    await interaction.response.send_message(f'🗑️ Машина `{госномер}` удалена.')
+    log_action(interaction.guild.id, interaction.user.id, get_member_nick(interaction.guild.id, interaction.user.id) or str(interaction.user),
+               "Удаление авто", f"Госномер {госномер}")
+    await interaction.response.send_message(f'🗑️ Машина `{госномер}` удалена.', ephemeral=True)
 
-@bot.tree.command(name="авто", description="Список автомобилей", guild=GUILD_ID)
-@app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="авто", description="Список автомобилей")
 async def car_list(interaction: discord.Interaction):
-    auto_return()
-    c.execute("SELECT id, owner_nick, model, plate, status, taken_by, return_at FROM vehicles")
+    c.execute("SELECT id, owner_nick, model, plate, status, taken_by, return_at FROM vehicles WHERE guild_id=?", (interaction.guild.id,))
     cars = c.fetchall()
     if not cars:
-        await interaction.response.send_message('🚫 Нет машин.'); return
+        return await interaction.response.send_message('🚫 Нет машин.', ephemeral=True)
     lines = []
     for cid, owner, model, plate, status, taken_by, ret_at in cars:
         if status == 'свободен':
@@ -565,47 +886,50 @@ async def car_list(interaction: discord.Interaction):
         else:
             lines.append(f'`{cid}` {model} ({plate}) — занят {taken_by}, до {ret_at}')
     embed = discord.Embed(title='🚗 Автомобили', description='\n'.join(lines), color=0x3498db)
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="взавто", description="Взять автомобиль", guild=GUILD_ID)
-@app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="взавто", description="Взять автомобиль")
 async def take_car(interaction: discord.Interaction, номер: int, часы: float = 2.0):
-    nick = get_member_nick(interaction.user.id)
+    if not await check_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
+    nick = get_member_nick(interaction.guild.id, interaction.user.id)
     if not nick:
-        await interaction.response.send_message('❌ Вы не привязаны к семье.'); return
+        return await interaction.response.send_message('❌ Вы не привязаны к семье.', ephemeral=True)
     nick = nick.replace("_", " ")
-    auto_return()
-    c.execute("SELECT status, plate FROM vehicles WHERE id=?", (номер,))
+    c.execute("SELECT status, plate FROM vehicles WHERE guild_id=? AND id=?", (interaction.guild.id, номер))
     car = c.fetchone()
     if not car:
-        await interaction.response.send_message(f'❌ Авто с номером `{номер}` не найдено.'); return
+        return await interaction.response.send_message(f'❌ Авто с номером `{номер}` не найдено.', ephemeral=True)
     status, plate = car
     if status != 'свободен':
-        await interaction.response.send_message(f'❌ Авто `{plate}` уже занято.'); return
+        return await interaction.response.send_message(f'❌ Авто `{plate}` уже занято.', ephemeral=True)
     now = datetime.datetime.now()
     return_at = now + datetime.timedelta(hours=часы)
-    c.execute("UPDATE vehicles SET status='занят', taken_by=?, taken_at=?, return_at=? WHERE id=?", (nick, now.isoformat(), return_at.isoformat(), номер))
+    c.execute("UPDATE vehicles SET status='занят', taken_by=?, taken_at=?, return_at=? WHERE guild_id=? AND id=?",
+              (nick, now.isoformat(), return_at.isoformat(), interaction.guild.id, номер))
     conn.commit()
-    log_action(interaction.user.id, nick, "Взять авто", f"Номер {номер}, на {часы} ч")
-    await interaction.response.send_message(f'✅ `{plate}` выдано `{nick}` на {часы} ч до {return_at.strftime("%d.%m.%Y %H:%M")}.')
+    log_action(interaction.guild.id, interaction.user.id, nick, "Взять авто", f"Номер {номер}, на {часы} ч")
+    await interaction.response.send_message(f'✅ `{plate}` выдано `{nick}` на {часы} ч до {return_at.strftime("%d.%m.%Y %H:%M")}.', ephemeral=True)
 
-@bot.tree.command(name="веавто", description="Вернуть автомобиль", guild=GUILD_ID)
-@app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="веавто", description="Вернуть автомобиль")
 async def return_car(interaction: discord.Interaction, номер: int):
-    c.execute("SELECT plate, status FROM vehicles WHERE id=?", (номер,))
+    if not await check_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
+    c.execute("SELECT plate, status FROM vehicles WHERE guild_id=? AND id=?", (interaction.guild.id, номер))
     car = c.fetchone()
     if not car:
-        await interaction.response.send_message(f'❌ Авто с номером `{номер}` не найдено.'); return
+        return await interaction.response.send_message(f'❌ Авто с номером `{номер}` не найдено.', ephemeral=True)
     plate, status = car
     if status == 'свободен':
-        await interaction.response.send_message(f'❌ Авто `{plate}` уже свободно.'); return
-    c.execute("UPDATE vehicles SET status='свободен', taken_by=NULL, taken_at=NULL, return_at=NULL WHERE id=?", (номер,))
+        return await interaction.response.send_message(f'❌ Авто `{plate}` уже свободно.', ephemeral=True)
+    c.execute("UPDATE vehicles SET status='свободен', taken_by=NULL, taken_at=NULL, return_at=NULL WHERE guild_id=? AND id=?",
+              (interaction.guild.id, номер))
     conn.commit()
-    log_action(interaction.user.id, get_member_nick(interaction.user.id) or str(interaction.user), "Вернуть авто", f"Номер {номер}")
-    await interaction.response.send_message(f'✅ Авто `{plate}` возвращено.')
+    log_action(interaction.guild.id, interaction.user.id, get_member_nick(interaction.guild.id, interaction.user.id) or str(interaction.user),
+               "Вернуть авто", f"Номер {номер}")
+    await interaction.response.send_message(f'✅ Авто `{plate}` возвращено.', ephemeral=True)
 
-@bot.tree.command(name="псклад", description="Положить предмет на склад", guild=GUILD_ID)
-@app_commands.checks.has_any_role(ASSISTANT_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="псклад", description="Положить предмет на склад")
 @app_commands.choices(категория=[
     app_commands.Choice(name="Оружие", value="Оружие"),
     app_commands.Choice(name="Патроны", value="Патроны"),
@@ -613,21 +937,22 @@ async def return_car(interaction: discord.Interaction, номер: int):
     app_commands.Choice(name="Прочее", value="Прочее")
 ])
 async def warehouse_put(interaction: discord.Interaction, предмет: str, категория: str, количество: int):
-    nick = get_member_nick(interaction.user.id)
+    if not await check_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
+    nick = get_member_nick(interaction.guild.id, interaction.user.id)
     if not nick:
-        await interaction.response.send_message('❌ Вы не привязаны к семье.'); return
+        return await interaction.response.send_message('❌ Вы не привязаны к семье.', ephemeral=True)
     nick = nick.replace("_", " ")
     if количество <= 0:
-        await interaction.response.send_message('❌ Количество > 0.'); return
+        return await interaction.response.send_message('❌ Количество > 0.', ephemeral=True)
     предмет = предмет.replace("_", " ").title()
-    c.execute("INSERT INTO warehouse (item, category, amount) VALUES (?, ?, ?) ON CONFLICT(item) DO UPDATE SET amount = amount + ?, category = ?",
-              (предмет, категория, количество, количество, категория))
+    c.execute("INSERT INTO warehouse (guild_id, item, category, amount) VALUES (?,?,?,?) ON CONFLICT(guild_id, item) DO UPDATE SET amount = amount + ?, category = ?",
+              (interaction.guild.id, предмет, категория, количество, количество, категория))
     conn.commit()
-    log_action(interaction.user.id, nick, "Положить на склад", f"{предмет} ({категория}) +{количество}")
-    await interaction.response.send_message(f'✅ `{nick}` положил {количество} x **{предмет}** ({категория}) на склад.')
+    log_action(interaction.guild.id, interaction.user.id, nick, "Положить на склад", f"{предмет} ({категория}) +{количество}")
+    await interaction.response.send_message(f'✅ `{nick}` положил {количество} x **{предмет}** ({категория}) на склад.', ephemeral=True)
 
-@bot.tree.command(name="склад", description="Просмотр склада", guild=GUILD_ID)
-@app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="склад", description="Просмотр склада")
 @app_commands.choices(категория=[
     app_commands.Choice(name="Всё", value="all"),
     app_commands.Choice(name="Оружие", value="Оружие"),
@@ -636,11 +961,13 @@ async def warehouse_put(interaction: discord.Interaction, предмет: str, �
     app_commands.Choice(name="Прочее", value="Прочее")
 ])
 async def warehouse_show(interaction: discord.Interaction, категория: str = "all"):
+    if not await check_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
     if категория == "all":
-        c.execute("SELECT item, amount, category FROM warehouse WHERE amount > 0")
+        c.execute("SELECT item, amount, category FROM warehouse WHERE guild_id=? AND amount > 0", (interaction.guild.id,))
         rows = c.fetchall()
         if not rows:
-            await interaction.response.send_message('📦 Склад пуст.'); return
+            return await interaction.response.send_message('📦 Склад пуст.', ephemeral=True)
         cats = {}
         for item, amount, cat in rows:
             cats.setdefault(cat, []).append((item, amount))
@@ -668,10 +995,10 @@ async def warehouse_show(interaction: discord.Interaction, категория: s
         content_parts.append(f"**🧾 ВСЕГО НА СКЛАДЕ:** `{total_all}` предметов")
         embed.description = "\n".join(content_parts)
     else:
-        c.execute("SELECT item, amount FROM warehouse WHERE category=? AND amount > 0", (категория,))
+        c.execute("SELECT item, amount FROM warehouse WHERE guild_id=? AND category=? AND amount > 0", (interaction.guild.id, категория))
         rows = c.fetchall()
         if not rows:
-            await interaction.response.send_message('📦 Склад пуст.'); return
+            return await interaction.response.send_message('📦 Склад пуст.', ephemeral=True)
         total = sum(amount for _, amount in rows)
         lines = []
         for item, amount in rows:
@@ -684,78 +1011,32 @@ async def warehouse_show(interaction: discord.Interaction, категория: s
         embed = discord.Embed(title="🗄️ СЕМЕЙНЫЙ СКЛАД", color=0x8B5E3C, description=f"{header}\n{items_text}\n{footer}")
     embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/2938/2938122.png")
     embed.set_footer(text=f"Обновлено: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}")
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="всклад", description="Взять предмет со склада", guild=GUILD_ID)
-@app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="всклад", description="Взять предмет со склада")
 async def warehouse_take(interaction: discord.Interaction, предмет: str, количество: int):
-    nick = get_member_nick(interaction.user.id)
+    if not await check_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
+    nick = get_member_nick(interaction.guild.id, interaction.user.id)
     if not nick:
-        await interaction.response.send_message('❌ Вы не привязаны к семье.'); return
+        return await interaction.response.send_message('❌ Вы не привязаны к семье.', ephemeral=True)
     nick = nick.replace("_", " ")
     if количество <= 0:
-        await interaction.response.send_message('❌ Количество > 0.'); return
+        return await interaction.response.send_message('❌ Количество > 0.', ephemeral=True)
     предмет = предмет.replace("_", " ").title()
-    c.execute("SELECT amount FROM warehouse WHERE item=?", (предмет,))
+    c.execute("SELECT amount FROM warehouse WHERE guild_id=? AND item=?", (interaction.guild.id, предмет))
     row = c.fetchone()
     if not row or row[0] < количество:
-        await interaction.response.send_message(f'❌ Недостаточно `{предмет}` на складе.'); return
-    c.execute("UPDATE warehouse SET amount = amount - ? WHERE item=?", (количество, предмет))
+        return await interaction.response.send_message(f'❌ Недостаточно `{предмет}` на складе.', ephemeral=True)
+    c.execute("UPDATE warehouse SET amount = amount - ? WHERE guild_id=? AND item=?", (количество, interaction.guild.id, предмет))
     conn.commit()
-    log_action(interaction.user.id, nick, "Взять со склада", f"{предмет} -{количество}")
-    await interaction.response.send_message(f'✅ `{nick}` забрал {количество} x **{предмет}** со склада.')
+    log_action(interaction.guild.id, interaction.user.id, nick, "Взять со склада", f"{предмет} -{количество}")
+    await interaction.response.send_message(f'✅ `{nick}` забрал {количество} x **{предмет}** со склада.', ephemeral=True)
 
-@bot.tree.command(name="банк", description="Баланс семьи", guild=GUILD_ID)
-@app_commands.checks.has_any_role(ASSISTANT_ROLE, SUPER_ADMIN_ROLE)
-async def bank_balance(interaction: discord.Interaction):
-    balance = get_family_balance()
-    await interaction.response.send_message(f'💰 Баланс семьи: {balance}')
-
-@bot.tree.command(name="пополнить", description="Пополнить семейный банк (скриншот обязателен)", guild=GUILD_ID)
-@app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
-async def bank_add(interaction: discord.Interaction, сумма: int, причина: str = "", скриншот: discord.Attachment = None):
-    if скриншот is None:
-        await interaction.response.send_message("❌ Необходимо прикрепить скриншот.", ephemeral=True)
-        return
-    if сумма <= 0:
-        await interaction.response.send_message("❌ Сумма должна быть положительной.", ephemeral=True)
-        return
-    nick = get_member_nick(interaction.user.id)
-    if not nick:
-        await interaction.response.send_message("❌ Вы не привязаны к семье. Используйте /дсемья.", ephemeral=True)
-        return
-    nick = nick.replace("_", " ")
-    c.execute("UPDATE bank SET balance = balance + ?", (сумма,))
-    conn.commit()
-    new_balance = get_family_balance()
-    log_action(interaction.user.id, nick, "Пополнение банка", f"+{сумма}, причина: {причина}")
-    file = discord.File(await скриншот.read(), filename=скриншот.filename)
-    await interaction.response.send_message(
-        f'💰 Счёт семьи пополнен на {сумма} (от {nick}). Баланс: {new_balance}.',
-        file=file
-    )
-
-@bot.tree.command(name="снять", description="Снять деньги из семейного банка", guild=GUILD_ID)
-@app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
-async def bank_remove(interaction: discord.Interaction, сумма: int, причина: str = ""):
-    if сумма <= 0:
-        await interaction.response.send_message("❌ Сумма должна быть положительной."); return
-    nick = get_member_nick(interaction.user.id)
-    if not nick:
-        await interaction.response.send_message("❌ Вы не привязаны к семье. Используйте /дсемья."); return
-    nick = nick.replace("_", " ")
-    balance = get_family_balance()
-    if balance < сумма:
-        await interaction.response.send_message(f"❌ Недостаточно средств. Баланс: {balance}."); return
-    c.execute("UPDATE bank SET balance = balance - ?", (сумма,))
-    conn.commit()
-    new_balance = get_family_balance()
-    log_action(interaction.user.id, nick, "Снятие с банка", f"-{сумма}, причина: {причина}")
-    await interaction.response.send_message(f"💸 Из бюджета семьи снято {сумма} (от {nick}). Баланс: {new_balance}.")
-
-@bot.tree.command(name="вк", description="Взять контракт", guild=GUILD_ID)
-@app_commands.checks.has_any_role(DEADLY_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="вк", description="Взять контракт")
 async def take_contract(interaction: discord.Interaction, участники: str, название: str, дата: str, время: str, векселя: int = 0):
+    if not await check_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
     members = []
     for part in участники.split():
         if part.startswith('<@') and part.endswith('>'):
@@ -764,20 +1045,23 @@ async def take_contract(interaction: discord.Interaction, участники: st
                 m = interaction.guild.get_member(int(uid))
                 if m: members.append(m)
     if not members:
-        await interaction.response.send_message("❌ Укажите участников через @."); return
-    try: due_dt = datetime.datetime.strptime(f"{дата} {время}", "%d.%m.%Y %H:%M")
+        return await interaction.response.send_message("❌ Укажите участников через @.", ephemeral=True)
+    try:
+        due_dt = datetime.datetime.strptime(f"{дата} {время}", "%d.%m.%Y %H:%M")
     except ValueError:
-        await interaction.response.send_message("❌ Неверный формат даты/времени."); return
+        return await interaction.response.send_message("❌ Неверный формат даты/времени.", ephemeral=True)
     participants_db = ', '.join(str(m.id) for m in members)
-    c.execute("INSERT INTO contracts (title, participants, due_date, bills, created_by, created_at, status) VALUES (?,?,?,?,?,?,?)",
-              (название, participants_db, due_dt.isoformat(), векселя, str(interaction.user), datetime.datetime.now().isoformat(), 'создан'))
+    c.execute("INSERT INTO contracts (guild_id, title, participants, due_date, bills, created_by, created_at, status) VALUES (?,?,?,?,?,?,?,?)",
+              (interaction.guild.id, название, participants_db, due_dt.isoformat(), векселя, str(interaction.user), datetime.datetime.now().isoformat(), 'создан'))
     conn.commit()
     contract_id = c.lastrowid
-    status_channel = interaction.guild.get_channel(CONTRACT_STATUS_CHANNEL_ID)
+    status_channel_id = get_contract_status_channel(interaction.guild.id)
+    status_channel = interaction.guild.get_channel(status_channel_id) if status_channel_id else None
     if status_channel is None:
-        await interaction.response.send_message("❌ Канал уведомлений о статусе не найден."); return
+        return await interaction.response.send_message("❌ Канал уведомлений о статусе не найден. Настройте бота через /setup в ЛС.", ephemeral=True)
     participants_mentions = ', '.join(m.mention for m in members)
-    role_mention = f"<@&{CONTRACT_NOTIFY_ROLE_ID}>"
+    contract_role_id = get_contract_role(interaction.guild.id)
+    role_mention = f"<@&{contract_role_id}>" if contract_role_id else ""
     embed = discord.Embed(title=f"📝 Контракт «{название}»", color=0x3498db)
     embed.add_field(name="Участники", value=participants_mentions, inline=False)
     embed.add_field(name="Срок", value=f"{дата} {время}", inline=False)
@@ -786,11 +1070,11 @@ async def take_contract(interaction: discord.Interaction, участники: st
     msg = await status_channel.send(content=role_mention, embed=embed)
     c.execute("UPDATE contracts SET message_id=? WHERE id=?", (msg.id, contract_id))
     conn.commit()
-    log_action(interaction.user.id, get_member_nick(interaction.user.id) or str(interaction.user), "Создание контракта", f"'{название}', участники: {participants_db}")
-    await interaction.response.send_message(f"✅ Контракт создан (ID {contract_id}). Уведомления придут в каналы.")
+    log_action(interaction.guild.id, interaction.user.id, get_member_nick(interaction.guild.id, interaction.user.id) or str(interaction.user),
+               "Создание контракта", f"'{название}', участники: {participants_db}")
+    await interaction.response.send_message(f"✅ Контракт создан (ID {contract_id}). Уведомления придут в каналы.", ephemeral=True)
 
-@bot.tree.command(name="дв", description="Выдать дисциплинарное взыскание", guild=GUILD_ID)
-@app_commands.checks.has_any_role(DISCIPLINE_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="дв", description="Выдать дисциплинарное взыскание")
 @app_commands.choices(тип=[
     app_commands.Choice(name="предупреждение", value="предупреждение"),
     app_commands.Choice(name="выговор", value="выговор"),
@@ -799,6 +1083,8 @@ async def take_contract(interaction: discord.Interaction, участники: st
     app_commands.Choice(name="увал", value="увал")
 ])
 async def dv_add(interaction: discord.Interaction, участники: str, тип: str, причина: str):
+    if not await check_dv(interaction) and not await check_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
     members = []
     for part in участники.split():
         if part.startswith('<@') and part.endswith('>'):
@@ -807,91 +1093,94 @@ async def dv_add(interaction: discord.Interaction, участники: str, ти
                 m = interaction.guild.get_member(int(uid))
                 if m: members.append(m)
     if not members:
-        await interaction.response.send_message("❌ Укажите участников через @."); return
-    vacation_role = interaction.guild.get_role(ROLE_VACATION_ID)
-    blocked = []
-    for m in members:
-        if vacation_role and vacation_role in m.roles:
-            blocked.append(m.display_name)
-    if blocked:
-        await interaction.response.send_message(f"❌ Нельзя выдать ДВ следующим участникам (Отпуск): {', '.join(blocked)}"); return
-    issuer_nick = get_member_nick(interaction.user.id) or str(interaction.user)
+        return await interaction.response.send_message("❌ Укажите участников через @.", ephemeral=True)
+    issuer_nick = get_member_nick(interaction.guild.id, interaction.user.id) or str(interaction.user)
     for m in members:
         nickname = m.display_name.replace(" ", "_")
-        c.execute("INSERT INTO disciplinary_actions (nickname, discord_id, action_type, reason, issued_by, date) VALUES (?,?,?,?,?,?)",
-                  (nickname, m.id, тип, причина, str(interaction.user), datetime.datetime.now().isoformat()))
+        c.execute("INSERT INTO disciplinary_actions (guild_id, nickname, discord_id, action_type, reason, issued_by, date) VALUES (?,?,?,?,?,?,?)",
+                  (interaction.guild.id, nickname, m.id, тип, причина, str(interaction.user), datetime.datetime.now().isoformat()))
         conn.commit()
-        await update_discipline_roles(m, nickname)
-        log_action(interaction.user.id, issuer_nick, "Выдача ДВ", f"{nickname}: {тип}, причина: {причина}")
+        log_action(interaction.guild.id, interaction.user.id, issuer_nick, "Выдача ДВ", f"{nickname}: {тип}, причина: {причина}")
     mentions = ', '.join(m.mention for m in members)
-    await interaction.response.send_message(f'⚠️ {mentions} получили **{тип}**.\nПричина: {причина}\nВыдал: {interaction.user.mention}')
+    await interaction.response.send_message(f'⚠️ {mentions} получили **{тип}**.\nПричина: {причина}\nВыдал: {interaction.user.mention}', ephemeral=True)
 
-@bot.tree.command(name="снятьдв", description="Снять последнее взыскание", guild=GUILD_ID)
-@app_commands.checks.has_any_role(DISCIPLINE_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="снятьдв", description="Снять последнее взыскание")
 async def dv_remove(interaction: discord.Interaction, участник: str, причина: str):
+    if not await check_dv(interaction) and not await check_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
     uid = None
     if участник.startswith('<@') and участник.endswith('>'):
         uid = участник.strip('<@!>')
     if not uid or not uid.isdigit():
-        await interaction.response.send_message("❌ Укажите участника через @."); return
+        return await interaction.response.send_message("❌ Укажите участника через @.", ephemeral=True)
     member = interaction.guild.get_member(int(uid))
     if member is None:
-        await interaction.response.send_message("❌ Участник не найден."); return
+        return await interaction.response.send_message("❌ Участник не найден.", ephemeral=True)
     nickname = member.display_name.replace(" ", "_")
-    c.execute("SELECT date FROM disciplinary_actions WHERE nickname=? ORDER BY date DESC LIMIT 1", (nickname,))
+    c.execute("SELECT date FROM disciplinary_actions WHERE guild_id=? AND nickname=? ORDER BY date DESC LIMIT 1", (interaction.guild.id, nickname))
     row = c.fetchone()
     if row:
-        try: last_dv_date = datetime.datetime.fromisoformat(row[0])
-        except: last_dv_date = None
-        if last_dv_date and (datetime.datetime.now() - last_dv_date).days < 7:
-            days_left = 7 - (datetime.datetime.now() - last_dv_date).days
-            await interaction.response.send_message(f"❌ С момента последнего взыскания прошло менее 7 дней. Осталось: {days_left} дн."); return
-    c.execute("DELETE FROM disciplinary_actions WHERE id = (SELECT id FROM disciplinary_actions WHERE nickname=? ORDER BY date DESC LIMIT 1)", (nickname,))
+        try:
+            last_dv_date = datetime.datetime.fromisoformat(row[0])
+            days = get_discipline_remove_days(interaction.guild.id)
+            if (datetime.datetime.now() - last_dv_date).days < days:
+                days_left = days - (datetime.datetime.now() - last_dv_date).days
+                return await interaction.response.send_message(f"❌ С момента последнего взыскания прошло менее {days} дней. Осталось: {days_left} дн.", ephemeral=True)
+        except:
+            pass
+    c.execute("DELETE FROM disciplinary_actions WHERE id = (SELECT id FROM disciplinary_actions WHERE guild_id=? AND nickname=? ORDER BY date DESC LIMIT 1)",
+              (interaction.guild.id, nickname))
     if c.rowcount == 0:
-        await interaction.response.send_message(f'❌ У {member.mention} нет выговоров.'); return
+        return await interaction.response.send_message(f'❌ У {member.mention} нет выговоров.', ephemeral=True)
     conn.commit()
-    await update_discipline_roles(member, nickname)
-    log_action(interaction.user.id, get_member_nick(interaction.user.id) or str(interaction.user), "Снятие ДВ", f"{nickname}, причина: {причина}")
-    await interaction.response.send_message(f'✅ Снят последний выговор с {member.mention}.\nПричина: {причина}')
+    log_action(interaction.guild.id, interaction.user.id, get_member_nick(interaction.guild.id, interaction.user.id) or str(interaction.user),
+               "Снятие ДВ", f"{nickname}, причина: {причина}")
+    await interaction.response.send_message(f'✅ Снят последний выговор с {member.mention}.\nПричина: {причина}', ephemeral=True)
 
-@bot.tree.command(name="выг", description="Показать выговоры участника", guild=GUILD_ID)
-@app_commands.checks.has_any_role(DISCIPLINE_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="выг", description="Показать выговоры участника")
 async def dv_list(interaction: discord.Interaction, участник: str = None):
+    if not await check_dv(interaction) and not await check_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
     if участник:
         uid = участник.strip('<@!>') if участник.startswith('<@') else None
         if uid and uid.isdigit():
             member = interaction.guild.get_member(int(uid))
             nickname = member.display_name.replace(" ", "_") if member else участник
-        else: nickname = участник
+        else:
+            nickname = участник
     else:
-        nickname = get_member_nick(interaction.user.id)
+        nickname = get_member_nick(interaction.guild.id, interaction.user.id)
         if not nickname:
-            await interaction.response.send_message('❌ Укажите @участника или будьте в семье.'); return
-    c.execute("SELECT action_type, reason, issued_by, date FROM disciplinary_actions WHERE nickname=? ORDER BY date DESC", (nickname,))
+            return await interaction.response.send_message('❌ Укажите @участника или будьте в семье.', ephemeral=True)
+    c.execute("SELECT action_type, reason, issued_by, date FROM disciplinary_actions WHERE guild_id=? AND nickname=? ORDER BY date DESC",
+              (interaction.guild.id, nickname))
     rows = c.fetchall()
     if not rows:
-        await interaction.response.send_message(f'✅ У `{nickname}` нет выговоров.'); return
+        return await interaction.response.send_message(f'✅ У `{nickname}` нет выговоров.', ephemeral=True)
     lines = [f'**{t}** — {r} (от {i}, {d})' for t, r, i, d in rows]
     embed = discord.Embed(title=f'📋 Выговоры: {nickname}', description='\n'.join(lines), color=0xff0000)
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="logs", description="Показать логи", guild=GUILD_ID)
-@app_commands.checks.has_any_role(ASSISTANT_ROLE, SUPER_ADMIN_ROLE)
+@bot.tree.command(name="logs", description="Показать логи")
 async def show_logs(interaction: discord.Interaction, участник: str = None):
+    if not await check_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
     if участник:
         uid = участник.strip('<@!>') if участник.startswith('<@') else None
         if uid and uid.isdigit():
-            c.execute("SELECT nickname, action, details, timestamp FROM logs WHERE discord_id=? ORDER BY id DESC LIMIT 10", (int(uid),))
+            c.execute("SELECT nickname, action, details, timestamp FROM logs WHERE guild_id=? AND discord_id=? ORDER BY id DESC LIMIT 10",
+                      (interaction.guild.id, int(uid)))
         else:
-            c.execute("SELECT nickname, action, details, timestamp FROM logs WHERE nickname=? ORDER BY id DESC LIMIT 10", (участник,))
+            c.execute("SELECT nickname, action, details, timestamp FROM logs WHERE guild_id=? AND nickname=? ORDER BY id DESC LIMIT 10",
+                      (interaction.guild.id, участник))
     else:
-        c.execute("SELECT nickname, action, details, timestamp FROM logs ORDER BY id DESC LIMIT 10")
+        c.execute("SELECT nickname, action, details, timestamp FROM logs WHERE guild_id=? ORDER BY id DESC LIMIT 10", (interaction.guild.id,))
     rows = c.fetchall()
     if not rows:
-        await interaction.response.send_message("📋 Логов нет."); return
+        return await interaction.response.send_message("📋 Логов нет.", ephemeral=True)
     lines = [f'**{nick}** – {action}\n{details} | {ts}' for nick, action, details, ts in rows]
     embed = discord.Embed(title="📋 Логи", description='\n'.join(lines), color=0x3498db)
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class SnakeGame:
     def __init__(self):
@@ -1176,7 +1465,7 @@ class MinesweeperView(GameView):
         await interaction.response.defer()
         await self.update(interaction, 4, 4)
 
-@bot.tree.command(name="игра", description="Запустить мини-игру", guild=GUILD_ID)
+@bot.tree.command(name="игра", description="Запустить мини-игру")
 @app_commands.choices(игра=[
     app_commands.Choice(name="Змейка", value="змейка"),
     app_commands.Choice(name="Сапёр", value="сапёр")
@@ -1185,87 +1474,82 @@ async def start_game(interaction: discord.Interaction, игра: str):
     if interaction.user.id in games:
         await interaction.response.send_message("У вас уже есть активная игра!", ephemeral=True)
         return
-    try:
-        if игра == "змейка":
-            game = SnakeGame()
-            view = SnakeView(game, interaction.user.id)
-            embed = discord.Embed(title="🐍 Змейка", description=game.render(), color=0x2ecc71)
-            embed.set_footer(text="Счёт: 0")
-            await interaction.response.send_message(embed=embed, view=view)
-            games[interaction.user.id] = game
-        elif игра == "сапёр":
-            game = MinesweeperGame()
-            view = MinesweeperView(game, interaction.user.id)
-            embed = discord.Embed(title="💣 Сапёр", description=game.render(), color=0x3498db)
-            await interaction.response.send_message(embed=embed, view=view)
-            games[interaction.user.id] = game
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Ошибка при запуске игры: {e}", ephemeral=True)
+    if игра == "змейка":
+        game = SnakeGame()
+        view = SnakeView(game, interaction.user.id)
+        embed = discord.Embed(title="🐍 Змейка", description=game.render(), color=0x2ecc71)
+        embed.set_footer(text="Счёт: 0")
+        await interaction.response.send_message(embed=embed, view=view)
+        games[interaction.user.id] = game
+    elif игра == "сапёр":
+        game = MinesweeperGame()
+        view = MinesweeperView(game, interaction.user.id)
+        embed = discord.Embed(title="💣 Сапёр", description=game.render(), color=0x3498db)
+        await interaction.response.send_message(embed=embed, view=view)
+        games[interaction.user.id] = game
 
 @bot.command(name="банк")
-@commands.check(lambda ctx: has_role(ctx, ASSISTANT_ROLE, SUPER_ADMIN_ROLE))
 async def bank_balance_txt(ctx):
-    balance = get_family_balance()
+    if not await has_admin(ctx):
+        return await ctx.send("❌ Недостаточно прав.", delete_after=10)
+    balance = get_family_balance(ctx.guild.id)
     await ctx.send(f'💰 Баланс семьи: {balance}')
 
 @bot.command(name="пополнить")
-@commands.check(lambda ctx: has_role(ctx, DEADLY_ROLE, SUPER_ADMIN_ROLE))
 async def bank_add_txt(ctx, amount: int, *, reason=""):
+    if not await has_admin(ctx):
+        return await ctx.send("❌ Недостаточно прав.", delete_after=10)
     if not ctx.message.attachments:
         return await ctx.send("❌ Необходимо прикрепить скриншот.", delete_after=10)
     if amount <= 0:
         return await ctx.send("❌ Сумма должна быть положительной.", delete_after=10)
-    nick = get_member_nick(ctx.author.id)
+    nick = get_member_nick(ctx.guild.id, ctx.author.id)
     if not nick:
         return await ctx.send("❌ Вы не привязаны к семье. Используйте !добавсемья.", delete_after=10)
     nick = nick.replace("_", " ")
-    c.execute("UPDATE bank SET balance = balance + ?", (amount,))
+    c.execute("UPDATE bank SET balance = balance + ? WHERE guild_id=?", (amount, ctx.guild.id))
+    if c.rowcount == 0:
+        c.execute("INSERT INTO bank (guild_id, balance) VALUES (?, ?)", (ctx.guild.id, amount))
     conn.commit()
-    new_balance = get_family_balance()
-    log_action(ctx.author.id, nick, "Пополнение банка", f"+{amount}, причина: {reason}")
+    new_balance = get_family_balance(ctx.guild.id)
+    log_action(ctx.guild.id, ctx.author.id, nick, "Пополнение банка", f"+{amount}, причина: {reason}")
     file = discord.File(await ctx.message.attachments[0].read(), filename=ctx.message.attachments[0].filename)
-    await ctx.send(
-        f"💰 Счёт семьи пополнен на {amount} (от {nick}). Баланс: {new_balance}.",
-        file=file
-    )
+    await ctx.send(f"💰 Счёт семьи пополнен на {amount} (от {nick}). Баланс: {new_balance}.", file=file)
 
 @bot.command(name="снять")
-@commands.check(lambda ctx: has_role(ctx, DEADLY_ROLE, SUPER_ADMIN_ROLE))
 async def bank_remove_txt(ctx, amount: int, *, reason=""):
+    if not await has_admin(ctx):
+        return await ctx.send("❌ Недостаточно прав.", delete_after=10)
     if amount <= 0:
         return await ctx.send("❌ Сумма должна быть положительной.", delete_after=10)
-    nick = get_member_nick(ctx.author.id)
+    nick = get_member_nick(ctx.guild.id, ctx.author.id)
     if not nick:
         return await ctx.send("❌ Вы не привязаны к семье. Используйте !добавсемья.", delete_after=10)
     nick = nick.replace("_", " ")
-    balance = get_family_balance()
+    balance = get_family_balance(ctx.guild.id)
     if balance < amount:
         return await ctx.send(f"❌ Недостаточно средств. Баланс: {balance}.", delete_after=10)
-    c.execute("UPDATE bank SET balance = balance - ?", (amount,))
+    c.execute("UPDATE bank SET balance = balance - ? WHERE guild_id=?", (amount, ctx.guild.id))
     conn.commit()
-    new_balance = get_family_balance()
-    log_action(ctx.author.id, nick, "Снятие с банка", f"-{amount}, причина: {reason}")
+    new_balance = get_family_balance(ctx.guild.id)
+    log_action(ctx.guild.id, ctx.author.id, nick, "Снятие с банка", f"-{amount}, причина: {reason}")
     await ctx.send(f"💸 Из бюджета семьи снято {amount} (от {nick}). Баланс: {new_balance}.")
 
 @bot.command(name="дв")
-@commands.check(lambda ctx: has_role(ctx, DISCIPLINE_ROLE, SUPER_ADMIN_ROLE))
 async def dv_add_txt(ctx, members: commands.Greedy[discord.Member], action_type: str, *, reason: str):
+    if not await has_dv(ctx) and not await has_admin(ctx):
+        return await ctx.send("❌ Недостаточно прав.", delete_after=10)
     action_type = action_type.lower()
     allowed = ["предупреждение", "выговор", "2выговора", "warn", "увал"]
     if action_type not in allowed:
         return await ctx.send(f'❌ Неверный тип. Допустимые: {", ".join(allowed)}', delete_after=10)
-    vacation_role = ctx.guild.get_role(ROLE_VACATION_ID)
-    blocked = [m.display_name for m in members if vacation_role and vacation_role in m.roles]
-    if blocked:
-        return await ctx.send(f"❌ Нельзя выдать ДВ следующим участникам (Отпуск): {', '.join(blocked)}", delete_after=10)
-    issuer_nick = get_member_nick(ctx.author.id) or str(ctx.author)
+    issuer_nick = get_member_nick(ctx.guild.id, ctx.author.id) or str(ctx.author)
     for m in members:
         nickname = m.display_name.replace(" ", "_")
-        c.execute("INSERT INTO disciplinary_actions (nickname, discord_id, action_type, reason, issued_by, date) VALUES (?,?,?,?,?,?)",
-                  (nickname, m.id, action_type, reason, str(ctx.author), datetime.datetime.now().isoformat()))
+        c.execute("INSERT INTO disciplinary_actions (guild_id, nickname, discord_id, action_type, reason, issued_by, date) VALUES (?,?,?,?,?,?,?)",
+                  (ctx.guild.id, nickname, m.id, action_type, reason, str(ctx.author), datetime.datetime.now().isoformat()))
         conn.commit()
-        await update_discipline_roles(m, nickname)
-        log_action(ctx.author.id, issuer_nick, "Выдача ДВ", f"{nickname}: {action_type}, причина: {reason}")
+        log_action(ctx.guild.id, ctx.author.id, issuer_nick, "Выдача ДВ", f"{nickname}: {action_type}, причина: {reason}")
     mentions = ', '.join(m.mention for m in members)
     await ctx.send(f'⚠️ {mentions} получили **{action_type}**.\nПричина: {reason}\nВыдал: {ctx.author.mention}')
 
@@ -1278,9 +1562,55 @@ async def help_txt(ctx):
     msg += "💰 **Банк:** !банк, !пополнить Сумма [Причина] (скриншот обязателен), !снять Сумма [Причина]\n"
     msg += "⚠️ **Дисциплина:** !дв @Участники Тип Причина, !выг [@Участник], !снятьдв @Участник Причина\n"
     msg += "📋 **Логи:** !logs [@Участник]\n"
-    msg += "💾 **Бекап:** !backup, !restore, !reset_contracts\n"
+    msg += "🛠️ **Настройка:** !setup в ЛС\n"
     msg += "🎮 **Игры:** /игра"
     await ctx.send(msg)
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    if message.author.id in sessions:
+        await sessions[message.author.id].handle_message(message)
+        return
+    if message.author.id in org_sessions:
+        session_data = org_sessions[message.author.id]
+        if isinstance(session_data, dict) and session_data["state"] == "guild_id":
+            try:
+                guild_id = int(message.content)
+                guild = bot.get_guild(guild_id)
+                if guild is None:
+                    await message.channel.send("Сервер не найден.")
+                    return
+                member = guild.get_member(message.author.id)
+                if member is None or not member.guild_permissions.administrator:
+                    await message.channel.send("Вы не администратор этого сервера.")
+                    return
+                session = OrgConfigSession(bot, message.author.id, guild_id)
+                await session.start(message.channel)
+                org_sessions[message.author.id] = session
+            except ValueError:
+                await message.channel.send("Неверный ID сервера.")
+            return
+        elif isinstance(session_data, OrgConfigSession):
+            await session_data.handle_message(message)
+            return
+    content = message.content.lower()
+    if message.guild and message.channel.id != get_log_channel(message.guild.id):
+        if profanity.contains_profanity(content):
+            await message.delete()
+            await message.channel.send(f"{message.author.mention}, ваше сообщение удалено за использование запрещённого слова.", delete_after=10)
+            return
+        for word in BAD_WORDS:
+            if re.search(rf'\b{word}\b', content):
+                await message.delete()
+                await message.channel.send(f"{message.author.mention}, ваше сообщение удалено за использование запрещённого слова.", delete_after=10)
+                return
+    await bot.process_commands(message)
+
+@bot.event
+async def on_ready():
+    print(f"Бот {bot.user} готов!")
 
 app = Flask(__name__)
 
