@@ -17,7 +17,7 @@ import sys
 
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:
-    raise RuntimeError("❌ Токен не задан! Установи переменную окружения TOKEN.")
+    raise RuntimeError("TOKEN not set")
 
 GUILD_ID = discord.Object(id=1473690194539708457)
 
@@ -141,13 +141,12 @@ class GtaBot(commands.Bot):
     async def setup_hook(self):
         try:
             await self.tree.sync(guild=GUILD_ID)
-            print("✅ Слеш-команды синхронизированы для гильдии", GUILD_ID.id)
+            print("✅ Slash commands synced")
         except Exception as e:
-            print("❌ Ошибка синхронизации:", e)
+            print("Sync error:", e)
             traceback.print_exc()
 
 bot = GtaBot()
-
 games = {}
 
 def get_member_nick(user_id):
@@ -221,7 +220,7 @@ async def on_ready():
     print(f"   Серверов: {len(bot.guilds)}")
     for guild in bot.guilds:
         print(f"   - {guild.name} (ID: {guild.id})")
-    print(f"   Запуск фоновых задач...")
+    print("   Запуск фоновых задач...")
     update_all_nicknames.start()
     auto_remove_expired_discipline.start()
     contract_reminders.start()
@@ -856,6 +855,22 @@ async def bank_balance(interaction: discord.Interaction):
     balance = get_family_balance()
     await interaction.response.send_message(f'💰 Баланс семьи: {balance}')
 
+def clean_filename(filename):
+    if not filename:
+        return "file.png"
+    name, ext = os.path.splitext(filename)
+    name = re.sub(r'[\\/*?:"<>|\x00]', '_', name)
+    name = name.replace('\x00', '')
+    if not name:
+        name = "file"
+    if ext:
+        ext = re.sub(r'[^a-zA-Z0-9.]', '', ext)
+        if len(ext) <= 1:
+            ext = '.png'
+    else:
+        ext = '.png'
+    return name + ext
+
 @bot.tree.command(name="пополнить", description="Пополнить семейный банк (скриншот обязателен)", guild=GUILD_ID)
 @has_role_slash(DEADLY_ROLE)
 async def bank_add(interaction: discord.Interaction, сумма: int, причина: str = "", скриншот: discord.Attachment = None):
@@ -875,18 +890,12 @@ async def bank_add(interaction: discord.Interaction, сумма: int, причи
         if not data:
             await interaction.response.send_message("❌ Файл пуст.", ephemeral=True)
             return
-        raw_name = скриншот.filename
-        safe_name = re.sub(r'[\\/*?:"<>|\x00]', '_', raw_name)
-        safe_name = safe_name.replace('\x00', '_')
-        if not safe_name:
-            safe_name = "file.png"
-        if '.' not in safe_name:
-            safe_name += '.png'
+        safe_name = clean_filename(скриншот.filename)
         c.execute("UPDATE bank SET balance = balance + ?", (сумма,))
         conn.commit()
         new_balance = get_family_balance()
         log_action(interaction.user.id, nick, "Пополнение банка", f"+{сумма}, причина: {причина}")
-        file = discord.File(io.BytesIO(data), filename=safe_name)
+        file = discord.File(data, filename=safe_name)
         await interaction.response.send_message(
             f'💰 Счёт семьи пополнен на {сумма} (от {nick}). Баланс: {new_balance}.',
             file=file
@@ -1432,18 +1441,12 @@ async def bank_add_txt(ctx, amount: int, *, reason=""):
         if not data:
             await ctx.send("❌ Файл пуст.", delete_after=10)
             return
-        raw_name = ctx.message.attachments[0].filename
-        safe_name = re.sub(r'[\\/*?:"<>|\x00]', '_', raw_name)
-        safe_name = safe_name.replace('\x00', '_')
-        if not safe_name:
-            safe_name = "file.png"
-        if '.' not in safe_name:
-            safe_name += '.png'
+        safe_name = clean_filename(ctx.message.attachments[0].filename)
         c.execute("UPDATE bank SET balance = balance + ?", (amount,))
         conn.commit()
         new_balance = get_family_balance()
         log_action(ctx.author.id, nick, "Пополнение банка", f"+{amount}, причина: {reason}")
-        file = discord.File(io.BytesIO(data), filename=safe_name)
+        file = discord.File(data, filename=safe_name)
         await ctx.send(
             f"💰 Счёт семьи пополнен на {amount} (от {nick}). Баланс: {new_balance}.",
             file=file
