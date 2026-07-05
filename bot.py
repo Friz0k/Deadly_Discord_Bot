@@ -145,7 +145,18 @@ bot = MyBot()
 
 games = {}
 
-def clean_filename(filename):
+def detect_image_type(data):
+    if data[:4] == b'\x89PNG':
+        return 'png'
+    if data[:2] == b'\xff\xd8':
+        return 'jpeg'
+    if data[:3] == b'GIF':
+        return 'gif'
+    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        return 'webp'
+    return None
+
+def clean_filename(filename, data=None):
     if not filename:
         return "file.png"
     name, ext = os.path.splitext(filename)
@@ -153,12 +164,19 @@ def clean_filename(filename):
     name = name.replace('\x00', '')
     if not name:
         name = "file"
-    if ext:
-        ext = re.sub(r'[^a-zA-Z0-9.]', '', ext)
-        if len(ext) <= 1:
+    if data:
+        img_type = detect_image_type(data)
+        if img_type:
+            ext = '.' + img_type
+        else:
             ext = '.png'
     else:
-        ext = '.png'
+        if ext:
+            ext = re.sub(r'[^a-zA-Z0-9.]', '', ext)
+            if len(ext) <= 1:
+                ext = '.png'
+        else:
+            ext = '.png'
     return name + ext
 
 def get_member_nick(user_id):
@@ -746,7 +764,7 @@ async def bank_add(interaction: discord.Interaction, сумма: int, причи
         if not data:
             await interaction.response.send_message("❌ Файл пуст.", ephemeral=True)
             return
-        safe_name = clean_filename(скриншот.filename)
+        safe_name = clean_filename(скриншот.filename, data)
         c.execute("UPDATE bank SET balance = balance + ?", (сумма,))
         conn.commit()
         new_balance = get_family_balance()
@@ -1247,7 +1265,7 @@ async def bank_add_txt(ctx, amount: int, *, reason=""):
         data = await ctx.message.attachments[0].read()
         if not data:
             return await ctx.send("❌ Файл пуст.", delete_after=10)
-        safe_name = clean_filename(ctx.message.attachments[0].filename)
+        safe_name = clean_filename(ctx.message.attachments[0].filename, data)
         c.execute("UPDATE bank SET balance = balance + ?", (amount,))
         conn.commit()
         new_balance = get_family_balance()
