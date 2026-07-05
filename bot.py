@@ -15,21 +15,18 @@ from threading import Thread
 import traceback
 import sys
 
-# ==================== КОНФИГУРАЦИЯ ====================
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:
     raise RuntimeError("❌ Токен не задан! Установи переменную окружения TOKEN.")
 
 GUILD_ID = discord.Object(id=1473690194539708457)
 
-# Роли (по названиям, для проверки)
 SUPER_ADMIN_ROLE = "Тех. Состав"
 RECRUITER_ROLE = "Recruiter"
 ASSISTANT_ROLE = "Assistant"
 DEADLY_ROLE = "Deadly"
 DISCIPLINE_ROLE = "Discipline"
 
-# ID каналов и ролей
 CONTRACT_NOTIFY_ROLE_ID = 1516422622122999888
 CONTRACT_CHANNEL_ID = 1515046132936343633
 CONTRACT_STATUS_CHANNEL_ID = 1515039473581166642
@@ -55,7 +52,6 @@ BAD_WORDS = [
     "шлюх", "бля", "пизд", "ебал", "ебаный", "выебок"
 ]
 
-# ==================== БАЗА ДАННЫХ ====================
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 c = conn.cursor()
 
@@ -115,7 +111,6 @@ def init_db():
         started_at TEXT
     )''')
     conn.commit()
-    # Добавляем колонки для совместимости
     for table, col, dtype in [
         ('family_members', 'discord_id', 'INTEGER'),
         ('disciplinary_actions', 'discord_id', 'INTEGER'),
@@ -130,7 +125,6 @@ def init_db():
 
 init_db()
 
-# ==================== БОТ ====================
 class GtaBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -154,10 +148,8 @@ class GtaBot(commands.Bot):
 
 bot = GtaBot()
 
-# Глобальный словарь для игр
 games = {}
 
-# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 def get_member_nick(user_id):
     c.execute("SELECT nickname FROM family_members WHERE discord_id=?", (user_id,))
     row = c.fetchone()
@@ -218,36 +210,11 @@ async def update_discipline_roles(member, nickname):
     if role:
         await member.add_roles(role, reason=f"Выговоры: {new_vygs}")
 
-def safe_filename(filename):
-    """
-    Очищает имя файла от недопустимых символов, сохраняя расширение.
-    """
-    if not filename:
-        return "file.png"
-    # Разделяем имя и расширение
-    base, ext = os.path.splitext(filename)
-    # Удаляем опасные символы из основы
-    base = re.sub(r'[\\/*?:"<>|\x00]', '_', base)
-    # Если основа пустая – подставляем "file"
-    if not base:
-        base = "file"
-    # Если расширение есть, оставляем его (включая точку), иначе добавляем .png
-    if ext:
-        # Удаляем опасные символы из расширения (например, если там были точки)
-        ext = re.sub(r'[^a-zA-Z0-9.]', '', ext)
-        # Если расширение стало пустым или содержит только точку – добавляем .png
-        if len(ext) <= 1:
-            ext = '.png'
-    else:
-        ext = '.png'
-    return base + ext
-
 def has_role_by_name(ctx, *role_names):
     if not ctx.author.guild_permissions.administrator:
         return any(role.name.lower() in [name.lower() for name in role_names] for role in ctx.author.roles)
     return True
 
-# ==================== СОБЫТИЯ БОТА ====================
 @bot.event
 async def on_ready():
     print(f"✅ Бот {bot.user} запущен!")
@@ -441,7 +408,6 @@ async def on_raw_reaction_add(payload):
         if channel:
             await channel.send(f"✅ Контракт (ID {row[0]}) принят к выполнению.")
 
-# ==================== ФОНОВЫЕ ЗАДАЧИ ====================
 @tasks.loop(minutes=10)
 async def update_all_nicknames():
     try:
@@ -518,7 +484,6 @@ async def contract_reminders():
     except Exception as e:
         print(f"Ошибка в contract_reminders: {e}")
 
-# ==================== ПРОВЕРКИ РОЛЕЙ (для слеш-команд) ====================
 async def check_role(interaction, role_name):
     if interaction.user.guild_permissions.administrator:
         return True
@@ -530,9 +495,6 @@ def has_role_slash(role_name):
         return await check_role(interaction, role_name)
     return app_commands.check(predicate)
 
-# ==================== СЛЕШ-КОМАНДЫ ====================
-
-# ----- СИНХРОНИЗАЦИЯ (только для админов) -----
 @bot.tree.command(name="sync", description="Принудительно синхронизировать команды", guild=GUILD_ID)
 async def sync_commands(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
@@ -544,7 +506,6 @@ async def sync_commands(interaction: discord.Interaction):
     except Exception as e:
         await interaction.response.send_message(f"❌ Ошибка синхронизации: {e}", ephemeral=True)
 
-# ----- ПОМОЩЬ -----
 @bot.tree.command(name="хелп", description="Помощь по боту", guild=GUILD_ID)
 async def help_cmd(interaction: discord.Interaction):
     embed = discord.Embed(title="✨ Помощь по боту", color=0x9b59b6)
@@ -559,7 +520,6 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="🎮 Игры", value="/игра — запустить мини-игру (змейка, сапёр)", inline=False)
     await interaction.response.send_message(embed=embed)
 
-# ----- БЕКАП -----
 @bot.tree.command(name="backup", description="Сохранить базу данных", guild=GUILD_ID)
 @has_role_slash(ASSISTANT_ROLE)
 async def backup_db(interaction: discord.Interaction):
@@ -618,14 +578,12 @@ async def reset_contracts(interaction: discord.Interaction):
     except Exception as e:
         await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
-# ----- ID -----
 @bot.tree.command(name="id", description="Узнать Discord ID", guild=GUILD_ID)
 @has_role_slash(RECRUITER_ROLE)
 async def get_id(interaction: discord.Interaction, пользователь: discord.Member = None):
     member = пользователь or interaction.user
     await interaction.response.send_message(f'🆔 {member.mention}: `{member.id}`')
 
-# ----- СЕМЬЯ -----
 @bot.tree.command(name="дсемья", description="Добавить участника в семью", guild=GUILD_ID)
 @has_role_slash(RECRUITER_ROLE)
 async def add_family(interaction: discord.Interaction, discord_id: str, никнейм: str):
@@ -685,7 +643,6 @@ async def family_list(interaction: discord.Interaction):
     embed = discord.Embed(title='👥 Семья', description='\n'.join(lines), color=0x00ff00)
     await interaction.response.send_message(embed=embed)
 
-# ----- АВТОМОБИЛИ -----
 @bot.tree.command(name="давто", description="Добавить автомобиль", guild=GUILD_ID)
 @has_role_slash(ASSISTANT_ROLE)
 async def add_car(interaction: discord.Interaction, модель: str, госномер: str):
@@ -779,7 +736,6 @@ async def return_car(interaction: discord.Interaction, номер: int):
                "Вернуть авто", f"Номер {номер}")
     await interaction.response.send_message(f'✅ Авто `{plate}` возвращено.')
 
-# ----- СКЛАД -----
 @bot.tree.command(name="псклад", description="Положить предмет на склад", guild=GUILD_ID)
 @has_role_slash(ASSISTANT_ROLE)
 @app_commands.choices(категория=[
@@ -894,7 +850,6 @@ async def warehouse_take(interaction: discord.Interaction, предмет: str, 
     log_action(interaction.user.id, nick, "Взять со склада", f"{предмет} -{количество}")
     await interaction.response.send_message(f'✅ `{nick}` забрал {количество} x **{предмет}** со склада.')
 
-# ----- БАНК -----
 @bot.tree.command(name="банк", description="Баланс семьи", guild=GUILD_ID)
 @has_role_slash(ASSISTANT_ROLE)
 async def bank_balance(interaction: discord.Interaction):
@@ -916,24 +871,22 @@ async def bank_add(interaction: discord.Interaction, сумма: int, причи
         return
     nick = nick.replace("_", " ")
     try:
-        # Читаем данные файла
         data = await скриншот.read()
         if not data:
             await interaction.response.send_message("❌ Файл пуст.", ephemeral=True)
             return
-        print(f"[LOG] Размер файла: {len(data)} байт, имя: {скриншот.filename}")
-        
-        # Очищаем имя файла
-        safe_name = safe_filename(скриншот.filename)
-        
-        # Обновляем баланс
+        raw_name = скриншот.filename
+        safe_name = re.sub(r'[\\/*?:"<>|\x00]', '_', raw_name)
+        safe_name = safe_name.replace('\x00', '_')
+        if not safe_name:
+            safe_name = "file.png"
+        if '.' not in safe_name:
+            safe_name += '.png'
         c.execute("UPDATE bank SET balance = balance + ?", (сумма,))
         conn.commit()
         new_balance = get_family_balance()
         log_action(interaction.user.id, nick, "Пополнение банка", f"+{сумма}, причина: {причина}")
-        
-        # Создаём файл напрямую из байтов
-        file = discord.File(data, filename=safe_name)
+        file = discord.File(io.BytesIO(data), filename=safe_name)
         await interaction.response.send_message(
             f'💰 Счёт семьи пополнен на {сумма} (от {nick}). Баланс: {new_balance}.',
             file=file
@@ -965,7 +918,6 @@ async def bank_remove(interaction: discord.Interaction, сумма: int, при�
     except Exception as e:
         await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
-# ----- КОНТРАКТЫ -----
 @bot.tree.command(name="вк", description="Взять контракт", guild=GUILD_ID)
 @has_role_slash(DEADLY_ROLE)
 async def take_contract(interaction: discord.Interaction, участники: str, название: str, дата: str, время: str, векселя: int = 0):
@@ -1012,7 +964,6 @@ async def take_contract(interaction: discord.Interaction, участники: st
     except Exception as e:
         await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
-# ----- ДИСЦИПЛИНА -----
 @bot.tree.command(name="дв", description="Выдать дисциплинарное взыскание", guild=GUILD_ID)
 @has_role_slash(DISCIPLINE_ROLE)
 @app_commands.choices(тип=[
@@ -1121,7 +1072,6 @@ async def dv_list(interaction: discord.Interaction, участник: str = None
     except Exception as e:
         await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
-# ----- ЛОГИ -----
 @bot.tree.command(name="logs", description="Показать логи", guild=GUILD_ID)
 @has_role_slash(ASSISTANT_ROLE)
 async def show_logs(interaction: discord.Interaction, участник: str = None):
@@ -1144,7 +1094,6 @@ async def show_logs(interaction: discord.Interaction, участник: str = No
     except Exception as e:
         await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
-# ==================== ИГРЫ ====================
 class SnakeGame:
     def __init__(self):
         self.board_size = 8
@@ -1454,7 +1403,6 @@ async def start_game(interaction: discord.Interaction, игра: str):
     except Exception as e:
         await interaction.response.send_message(f"❌ Ошибка при запуске игры: {e}", ephemeral=True)
 
-# ==================== ТЕКСТОВЫЕ КОМАНДЫ (для совместимости) ====================
 @bot.command(name="банк")
 async def bank_balance_txt(ctx):
     if not has_role_by_name(ctx, ASSISTANT_ROLE, SUPER_ADMIN_ROLE):
@@ -1484,15 +1432,18 @@ async def bank_add_txt(ctx, amount: int, *, reason=""):
         if not data:
             await ctx.send("❌ Файл пуст.", delete_after=10)
             return
-        print(f"[LOG] Размер файла: {len(data)} байт, имя: {ctx.message.attachments[0].filename}")
-        safe_name = safe_filename(ctx.message.attachments[0].filename)
-        
+        raw_name = ctx.message.attachments[0].filename
+        safe_name = re.sub(r'[\\/*?:"<>|\x00]', '_', raw_name)
+        safe_name = safe_name.replace('\x00', '_')
+        if not safe_name:
+            safe_name = "file.png"
+        if '.' not in safe_name:
+            safe_name += '.png'
         c.execute("UPDATE bank SET balance = balance + ?", (amount,))
         conn.commit()
         new_balance = get_family_balance()
         log_action(ctx.author.id, nick, "Пополнение банка", f"+{amount}, причина: {reason}")
-        
-        file = discord.File(data, filename=safe_name)
+        file = discord.File(io.BytesIO(data), filename=safe_name)
         await ctx.send(
             f"💰 Счёт семьи пополнен на {amount} (от {nick}). Баланс: {new_balance}.",
             file=file
@@ -1568,7 +1519,6 @@ async def help_txt(ctx):
     embed.add_field(name="🎮 Игры", value="/игра", inline=False)
     await ctx.send(embed=embed)
 
-# ==================== FLASK-СЕРВЕР ДЛЯ RENDER ====================
 app = Flask(__name__)
 
 @app.route('/')
@@ -1581,7 +1531,6 @@ def run_web():
 
 Thread(target=run_web).start()
 
-# ==================== ЗАПУСК БОТА ====================
 if __name__ == "__main__":
     try:
         bot.run(TOKEN)
