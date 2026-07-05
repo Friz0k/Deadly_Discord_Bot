@@ -145,7 +145,6 @@ class GtaBot(commands.Bot):
         self.startup_time = datetime.datetime.now()
 
     async def setup_hook(self):
-        """Синхронизация команд при запуске"""
         try:
             await self.tree.sync(guild=GUILD_ID)
             print("✅ Слеш-команды синхронизированы для гильдии", GUILD_ID.id)
@@ -186,7 +185,6 @@ def get_discipline_counts(nickname):
     return warnings, vygs
 
 async def update_discipline_roles(member, nickname):
-    """Обновляет роли наказаний у участника"""
     for role_id in DISC_ROLES:
         role = member.guild.get_role(role_id)
         if role and role in member.roles:
@@ -221,19 +219,30 @@ async def update_discipline_roles(member, nickname):
         await member.add_roles(role, reason=f"Выговоры: {new_vygs}")
 
 def safe_filename(filename):
-    """Очищает имя файла от недопустимых символов и нулевых байтов"""
+    """
+    Очищает имя файла от недопустимых символов, сохраняя расширение.
+    """
     if not filename:
         return "file.png"
-    cleaned = re.sub(r'[\\/*?:"<>|\x00]', '_', filename)
-    cleaned = cleaned.strip()
-    if not cleaned:
-        cleaned = "file.png"
-    if '.' not in cleaned:
-        cleaned += '.png'
-    return cleaned
+    # Разделяем имя и расширение
+    base, ext = os.path.splitext(filename)
+    # Удаляем опасные символы из основы
+    base = re.sub(r'[\\/*?:"<>|\x00]', '_', base)
+    # Если основа пустая – подставляем "file"
+    if not base:
+        base = "file"
+    # Если расширение есть, оставляем его (включая точку), иначе добавляем .png
+    if ext:
+        # Удаляем опасные символы из расширения (например, если там были точки)
+        ext = re.sub(r'[^a-zA-Z0-9.]', '', ext)
+        # Если расширение стало пустым или содержит только точку – добавляем .png
+        if len(ext) <= 1:
+            ext = '.png'
+    else:
+        ext = '.png'
+    return base + ext
 
 def has_role_by_name(ctx, *role_names):
-    """Проверка наличия роли по названию (для текстовых команд)"""
     if not ctx.author.guild_permissions.administrator:
         return any(role.name.lower() in [name.lower() for name in role_names] for role in ctx.author.roles)
     return True
@@ -286,7 +295,6 @@ async def on_member_update(before, after):
     except Exception as e:
         print(f"Ошибка в on_member_update: {e}")
 
-    # Авто-добавление/удаление из семьи
     role = after.guild.get_role(ROLE_FAMILY_AUTO)
     if not role:
         return
@@ -375,7 +383,6 @@ async def on_member_kick(guild, user):
 async def on_message(message):
     if message.author.bot:
         return
-    # Фильтр мата
     content = message.content.lower()
     if profanity.contains_profanity(content):
         await message.delete()
@@ -909,13 +916,24 @@ async def bank_add(interaction: discord.Interaction, сумма: int, причи
         return
     nick = nick.replace("_", " ")
     try:
+        # Читаем данные файла
+        data = await скриншот.read()
+        if not data:
+            await interaction.response.send_message("❌ Файл пуст.", ephemeral=True)
+            return
+        print(f"[LOG] Размер файла: {len(data)} байт, имя: {скриншот.filename}")
+        
+        # Очищаем имя файла
+        safe_name = safe_filename(скриншот.filename)
+        
+        # Обновляем баланс
         c.execute("UPDATE bank SET balance = balance + ?", (сумма,))
         conn.commit()
         new_balance = get_family_balance()
         log_action(interaction.user.id, nick, "Пополнение банка", f"+{сумма}, причина: {причина}")
-        safe_name = safe_filename(скриншот.filename)
-        data = await скриншот.read()
-        file = discord.File(io.BytesIO(data), filename=safe_name)
+        
+        # Создаём файл напрямую из байтов
+        file = discord.File(data, filename=safe_name)
         await interaction.response.send_message(
             f'💰 Счёт семьи пополнен на {сумма} (от {nick}). Баланс: {new_balance}.',
             file=file
@@ -1462,19 +1480,25 @@ async def bank_add_txt(ctx, amount: int, *, reason=""):
         return
     nick = nick.replace("_", " ")
     try:
+        data = await ctx.message.attachments[0].read()
+        if not data:
+            await ctx.send("❌ Файл пуст.", delete_after=10)
+            return
+        print(f"[LOG] Размер файла: {len(data)} байт, имя: {ctx.message.attachments[0].filename}")
+        safe_name = safe_filename(ctx.message.attachments[0].filename)
+        
         c.execute("UPDATE bank SET balance = balance + ?", (amount,))
         conn.commit()
         new_balance = get_family_balance()
         log_action(ctx.author.id, nick, "Пополнение банка", f"+{amount}, причина: {reason}")
-        safe_name = safe_filename(ctx.message.attachments[0].filename)
-        data = await ctx.message.attachments[0].read()
-        file = discord.File(io.BytesIO(data), filename=safe_name)
+        
+        file = discord.File(data, filename=safe_name)
         await ctx.send(
             f"💰 Счёт семьи пополнен на {amount} (от {nick}). Баланс: {new_balance}.",
             file=file
         )
     except Exception as e:
-        await ctx.send(f"❌ Ошибка: {e}", delete_after=10)
+        await ctx.send(f"❌ Ошибка при обработке файла: {e}", delete_after=10)
 
 @bot.command(name="снять")
 async def bank_remove_txt(ctx, amount: int, *, reason=""):
