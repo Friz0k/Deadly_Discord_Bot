@@ -409,6 +409,18 @@ async def on_ready():
 def has_role(ctx, *role_names):
     return any(role.name.lower() in [name.lower() for name in role_names] for role in ctx.author.roles)
 
+# ==================== ФУНКЦИЯ ДЛЯ БЕЗОПАСНОГО ИМЕНИ ФАЙЛА ====================
+def safe_filename(filename):
+    """Убирает нулевые байты и недопустимые символы из имени файла"""
+    if filename is None:
+        return "file"
+    # Удаляем нулевые байты и символы \ / * ? " < > |
+    cleaned = re.sub(r'[\\/*?:"<>|\x00]', '_', filename)
+    # Если после очистки имя пустое – задаём запасное
+    if not cleaned:
+        cleaned = "file"
+    return cleaned
+
 @bot.tree.command(name="хелп", description="Помощь по боту", guild=GUILD_ID)
 async def help_cmd(interaction: discord.Interaction):
     embed = discord.Embed(title="✨ Помощь по боту", color=0x9b59b6)
@@ -729,7 +741,9 @@ async def bank_add(interaction: discord.Interaction, сумма: int, причи
     conn.commit()
     new_balance = get_family_balance()
     log_action(interaction.user.id, nick, "Пополнение банка", f"+{сумма}, причина: {причина}")
-    file = discord.File(await скриншот.read(), filename=скриншот.filename)
+    # Используем safe_filename для очистки имени файла
+    safe_name = safe_filename(скриншот.filename)
+    file = discord.File(await скриншот.read(), filename=safe_name)
     await interaction.response.send_message(
         f'💰 Счёт семьи пополнен на {сумма} (от {nick}). Баланс: {new_balance}.',
         file=file
@@ -1223,7 +1237,9 @@ async def bank_add_txt(ctx, amount: int, *, reason=""):
     conn.commit()
     new_balance = get_family_balance()
     log_action(ctx.author.id, nick, "Пополнение банка", f"+{amount}, причина: {reason}")
-    file = discord.File(await ctx.message.attachments[0].read(), filename=ctx.message.attachments[0].filename)
+    # Используем safe_filename
+    safe_name = safe_filename(ctx.message.attachments[0].filename)
+    file = discord.File(await ctx.message.attachments[0].read(), filename=safe_name)
     await ctx.send(
         f"💰 Счёт семьи пополнен на {amount} (от {nick}). Баланс: {new_balance}.",
         file=file
