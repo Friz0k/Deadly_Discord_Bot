@@ -34,6 +34,12 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 async def on_ready():
     logger.info(f"✅ Бот {bot.user} запущен!")
     try:
+        # Очищаем все глобальные команды
+        await bot.tree.clear_commands(guild=None)
+        # Очищаем команды для каждой гильдии
+        for guild in bot.guilds:
+            await bot.tree.clear_commands(guild=guild)
+        # Синхронизируем (это удалит все старые команды)
         synced = await bot.tree.sync()
         logger.info(f"Синхронизировано {len(synced)} слеш-команд")
     except Exception as e:
