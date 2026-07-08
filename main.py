@@ -34,11 +34,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 async def on_ready():
     logger.info(f"✅ Бот {bot.user} запущен!")
     try:
-        logger.info("Очищаем старые команды...")
-        bot.tree.clear_commands(guild=None)
-        for guild in bot.guilds:
-            bot.tree.clear_commands(guild=guild)
-        await asyncio.sleep(1)
         synced = await bot.tree.sync()
         logger.info(f"Синхронизировано {len(synced)} слеш-команд")
         if synced:
