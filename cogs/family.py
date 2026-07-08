@@ -7,16 +7,28 @@ from utils.database import add_family_member, get_family_members
 class FamilyCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.sync_family_nicknames.start()
+        self.sync_task_started = False
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        if not self.sync_task_started:
+            self.sync_family_nicknames.start()
+            self.sync_task_started = True
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if before.roles != after.roles:
+            if any(role.id == ROLE_FAMILY for role in after.roles) and not any(role.id == ROLE_FAMILY for role in before.roles):
+                add_family_member(after.id, after.display_name)
 
     def cog_unload(self):
         self.sync_family_nicknames.cancel()
 
     @tasks.loop(minutes=10)
     async def sync_family_nicknames(self):
-        guild = self.bot.get_guild(self.bot.guilds[0].id)
-        if not guild:
+        if not self.bot.guilds:
             return
+        guild = self.bot.guilds[0]
         role = guild.get_role(ROLE_FAMILY)
         if not role:
             return
