@@ -68,4 +68,6 @@ class ContractsCog(commands.Cog):
         await interaction.response.send_modal(ContractModal())
 
 async def setup(bot: commands.Bot):
+    logger.info("Загружаем cogs.contracts")
     await bot.add_cog(ContractsCog(bot))
+    logger.info("cogs.contracts загружен успешно")
