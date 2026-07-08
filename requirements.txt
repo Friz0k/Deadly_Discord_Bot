@@ -1,3 +1,2 @@
-discord.py
-flask
-better-profanity
+discord.py>=2.3.0
+aiohttp>=3.9.0
