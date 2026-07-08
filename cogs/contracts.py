@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from config import ROLE_FAMILY, ROLE_CONTRACT_MANAGER, CHANNEL_CONTRACT_START
 from utils.database import add_contract, get_contract, update_contract_status
+import re
 import logging
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,14 @@ class ContractStartView(discord.ui.View):
         update_contract_status(self.contract_id, "started")
         channel = interaction.guild.get_channel(CHANNEL_CONTRACT_START)
         if channel:
-            await channel.send(f"⚠️ Уважаемые {self.participants}, ваш контракт начал выполняться!")
+            # Парсим упоминания из строки участников
+            mention_ids = re.findall(r'<@!?(\d+)>', self.participants)
+            mention_text = ' '.join([f'<@{uid}>' for uid in mention_ids])
+            if mention_text:
+                content = f"⚠️ Уважаемые {mention_text}, ваш контракт начал выполняться!"
+            else:
+                content = f"⚠️ Уважаемые участники, ваш контракт начал выполняться!"
+            await channel.send(content, allowed_mentions=discord.AllowedMentions.all())
         await interaction.response.send_message("✅ Контракт запущен!", ephemeral=True)
         logger.info(f"{interaction.user} запустил контракт {self.contract_id}")
 
