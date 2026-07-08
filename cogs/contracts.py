@@ -46,7 +46,6 @@ class ContractStartView(discord.ui.View):
         update_contract_status(self.contract_id, "started")
         channel = interaction.guild.get_channel(CHANNEL_CONTRACT_START)
         if channel:
-            # Парсим упоминания из строки участников
             mention_ids = re.findall(r'<@!?(\d+)>', self.participants)
             mention_text = ' '.join([f'<@{uid}>' for uid in mention_ids])
             if mention_text:
