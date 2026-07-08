@@ -34,11 +34,14 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 async def on_ready():
     logger.info(f"✅ Бот {bot.user} запущен!")
     try:
+        for guild in bot.guilds:
+            await bot.tree.sync(guild=discord.Object(id=guild.id))
+            logger.info(f"Синхронизировано для сервера {guild.name} ({guild.id})")
         synced = await bot.tree.sync()
-        logger.info(f"Синхронизировано {len(synced)} слеш-команд")
+        logger.info(f"Синхронизировано {len(synced)} глобальных слеш-команд")
         if synced:
             cmd_names = [cmd.name for cmd in synced]
-            logger.info(f"Активные команды: {', '.join(cmd_names)}")
+            logger.info(f"Активные глобальные команды: {', '.join(cmd_names)}")
     except Exception as e:
         logger.error(f"Ошибка синхронизации: {e}")
 
