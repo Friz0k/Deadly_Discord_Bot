@@ -1,8 +1,8 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from config import ROLE_FAMILY, ROLE_CONTRACT_MANAGER, CHANNEL_CONTRACT_START
-from utils.database import add_contract, get_contract, update_contract_status
+from config import ROLE_FAMILY, ROLE_CONTRACT_MANAGER, CHANNEL_CONTRACT_START, ADMIN_ROLE
+from utils.database import add_contract, update_contract_status
 import re
 import logging
 
@@ -40,8 +40,8 @@ class ContractStartView(discord.ui.View):
 
     @discord.ui.button(label="✅", style=discord.ButtonStyle.success, custom_id="start_contract")
     async def start_contract(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not any(role.id == ROLE_CONTRACT_MANAGER for role in interaction.user.roles):
-            await interaction.response.send_message("❌ Только управляющий контрактами может начать.", ephemeral=True)
+        if not any(role.id == ROLE_CONTRACT_MANAGER for role in interaction.user.roles) and not any(role.id == ADMIN_ROLE for role in interaction.user.roles):
+            await interaction.response.send_message("❌ Только управляющий контрактами или админ может начать.", ephemeral=True)
             return
         update_contract_status(self.contract_id, "started")
         channel = interaction.guild.get_channel(CHANNEL_CONTRACT_START)
@@ -62,7 +62,7 @@ class ContractsCog(commands.Cog):
 
     @app_commands.command(name="вк", description="Создать контракт (через форму)")
     async def create_contract(self, interaction: discord.Interaction):
-        if not any(role.id == ROLE_FAMILY for role in interaction.user.roles):
+        if not any(role.id == ROLE_FAMILY for role in interaction.user.roles) and not any(role.id == ADMIN_ROLE for role in interaction.user.roles):
             await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
             return
         await interaction.response.send_modal(ContractModal())
