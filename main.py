@@ -6,6 +6,7 @@ from flask import Flask
 import threading
 import logging
 import sys
+import traceback
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,31 +40,51 @@ async def on_ready():
         logger.error(f"Ошибка синхронизации: {e}")
 
 async def load_extensions():
-    await bot.load_extension("cogs.wiki")
-    await bot.load_extension("cogs.rules")
-    await bot.load_extension("cogs.family")
-    await bot.load_extension("cogs.autos")
-    await bot.load_extension("cogs.warehouse")
-    await bot.load_extension("cogs.bank")
-    await bot.load_extension("cogs.contracts")
-    await bot.load_extension("cogs.discipline")
-    await bot.load_extension("cogs.logs")
-    await bot.load_extension("cogs.backup")
+    extensions = [
+        "cogs.wiki",
+        "cogs.rules",
+        "cogs.family",
+        "cogs.autos",
+        "cogs.warehouse",
+        "cogs.bank",
+        "cogs.contracts",
+        "cogs.discipline",
+        "cogs.logs",
+        "cogs.backup"
+    ]
+    for ext in extensions:
+        try:
+            await bot.load_extension(ext)
+            logger.info(f"✅ Загружен {ext}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка загрузки {ext}: {e}")
+            traceback.print_exc()
 
 async def main():
+    logger.info("Начинаем загрузку расширений...")
     await load_extensions()
-    await bot.start(config.TOKEN)
+    logger.info("Все расширения загружены, запускаем бота...")
+    try:
+        await bot.start(config.TOKEN)
+    except discord.LoginFailure as e:
+        logger.error(f"Ошибка логина: {e} – проверь токен")
+    except Exception as e:
+        logger.error(f"Ошибка при запуске бота: {e}")
+        traceback.print_exc()
 
 if __name__ == "__main__":
     if not config.TOKEN:
         logger.error("❌ Токен не найден! Установи переменную окружения TOKEN")
         sys.exit(1)
 
+    logger.info("Запускаем Flask...")
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
+    logger.info("Flask запущен, запускаем бота...")
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Бот остановлен")
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}")
+        traceback.print_exc()
