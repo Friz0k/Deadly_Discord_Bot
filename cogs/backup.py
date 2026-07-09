@@ -32,7 +32,7 @@ class BackupCog(commands.Cog):
 
         try:
             await interaction.user.send(file=discord.File(backup_path))
-            await interaction.followup.send("✅ Бэкап создан и отправлен в личные сообщения.", ephemeral=True)
+            await interaction.followup.send(f"✅ {interaction.user.mention} бэкап создан и отправлен в личные сообщения.", ephemeral=True)
             logger.info(f"{interaction.user} создал и отправил бэкап в DM")
         except discord.Forbidden:
             await interaction.followup.send("❌ Не удалось отправить файл в личные сообщения. Проверьте настройки приватности.", ephemeral=True)
@@ -61,7 +61,7 @@ class BackupCog(commands.Cog):
         await file.save(backup_path)
         shutil.copy(backup_path, DB_PATH)
         os.remove(backup_path)
-        await interaction.followup.send("✅ База данных восстановлена из загруженного файла.", ephemeral=True)
+        await interaction.followup.send(f"✅ {interaction.user.mention} восстановил базу данных из файла {file.filename}.", ephemeral=True)
         logger.info(f"{interaction.user} восстановил БД из файла {file.filename}")
 
 async def setup(bot: commands.Bot):
