@@ -26,7 +26,7 @@ class DisciplineModal(discord.ui.Modal, title="Новое дисциплинар
             await interaction.response.send_message("❌ ID должен быть числом.", ephemeral=True)
             return
         add_discipline(target_id, self.type.value, self.reason.value, self.proof_url, interaction.user.id)
-        await interaction.response.send_message(f"✅ Взыскание для <@{target_id}> оформлено.", ephemeral=True)
+        await interaction.response.send_message(f"✅ {interaction.user.mention} выдал взыскание для <@{target_id}>. Тип: {self.type.value}, причина: {self.reason.value}")
         logger.info(f"{interaction.user} выдал взыскание {target_id}")
 
 class RemoveDisciplineModal(discord.ui.Modal, title="Снятие взыскания"):
@@ -46,7 +46,7 @@ class RemoveDisciplineModal(discord.ui.Modal, title="Снятие взыскан
         except ValueError:
             await interaction.response.send_message("❌ ID должен быть числом.", ephemeral=True)
             return
-        await interaction.response.send_message(f"✅ Взыскание с <@{target_id}> снято. Причина: {self.reason.value}", ephemeral=True)
+        await interaction.response.send_message(f"✅ {interaction.user.mention} снял взыскание с <@{target_id}>. Причина: {self.reason.value}")
         logger.info(f"{interaction.user} снял взыскание с {target_id}")
 
 class DisciplineCog(commands.Cog):
@@ -58,6 +58,9 @@ class DisciplineCog(commands.Cog):
         if not any(role.id in (ROLE_DISCIPLINE_MOD, ROLE_DISCIPLINE_VIEW) for role in interaction.user.roles) and not any(role.id == ADMIN_ROLE for role in interaction.user.roles):
             await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
             return
+        if not attachment:
+            await interaction.response.send_message("❌ Прикрепите скриншот в поле 'Вложение'.", ephemeral=True)
+            return
         proof_url = attachment.url
         await interaction.response.send_modal(DisciplineModal(proof_url))
 
@@ -65,6 +68,9 @@ class DisciplineCog(commands.Cog):
     async def remove_discipline(self, interaction: discord.Interaction, attachment: discord.Attachment):
         if not any(role.id in (ROLE_DISCIPLINE_MOD, ROLE_DISCIPLINE_VIEW) for role in interaction.user.roles) and not any(role.id == ADMIN_ROLE for role in interaction.user.roles):
             await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
+            return
+        if not attachment:
+            await interaction.response.send_message("❌ Прикрепите скриншот в поле 'Вложение'.", ephemeral=True)
             return
         proof_url = attachment.url
         await interaction.response.send_modal(RemoveDisciplineModal(proof_url))
