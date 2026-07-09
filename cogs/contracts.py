@@ -52,7 +52,7 @@ class ContractStartView(discord.ui.View):
             else:
                 content = f"⚠️ Уважаемые участники, ваш контракт начал выполняться!"
             await channel.send(content, allowed_mentions=discord.AllowedMentions.all())
-        await interaction.response.send_message("✅ Контракт запущен!", ephemeral=True)
+        await interaction.response.send_message("✅ Контракт запущен!")
         logger.info(f"{interaction.user} запустил контракт {self.contract_id}")
 
 class ContractsCog(commands.Cog):
