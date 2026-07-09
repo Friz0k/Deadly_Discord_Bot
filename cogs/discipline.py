@@ -26,7 +26,18 @@ class DisciplineModal(discord.ui.Modal, title="Новое дисциплинар
             await interaction.response.send_message("❌ ID должен быть числом.", ephemeral=True)
             return
         add_discipline(target_id, self.type.value, self.reason.value, self.proof_url, interaction.user.id)
-        await interaction.response.send_message(f"✅ {interaction.user.mention} выдал взыскание для <@{target_id}>. Тип: {self.type.value}, причина: {self.reason.value}")
+
+        embed = discord.Embed(
+            title="⚠️ Дисциплинарное взыскание",
+            description=(
+                f"**{interaction.user.mention}** выдал взыскание для <@{target_id}>.\n"
+                f"Тип: **{self.type.value}**\n"
+                f"Причина: {self.reason.value}"
+            ),
+            color=discord.Color.red()
+        )
+        embed.set_image(url=self.proof_url)
+        await interaction.response.send_message(embed=embed)
         logger.info(f"{interaction.user} выдал взыскание {target_id}")
 
 class RemoveDisciplineModal(discord.ui.Modal, title="Снятие взыскания"):
@@ -46,7 +57,17 @@ class RemoveDisciplineModal(discord.ui.Modal, title="Снятие взыскан
         except ValueError:
             await interaction.response.send_message("❌ ID должен быть числом.", ephemeral=True)
             return
-        await interaction.response.send_message(f"✅ {interaction.user.mention} снял взыскание с <@{target_id}>. Причина: {self.reason.value}")
+
+        embed = discord.Embed(
+            title="✅ Снятие взыскания",
+            description=(
+                f"**{interaction.user.mention}** снял взыскание с <@{target_id}>.\n"
+                f"Причина: {self.reason.value}"
+            ),
+            color=discord.Color.green()
+        )
+        embed.set_image(url=self.proof_url)
+        await interaction.response.send_message(embed=embed)
         logger.info(f"{interaction.user} снял взыскание с {target_id}")
 
 class DisciplineCog(commands.Cog):
