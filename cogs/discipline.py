@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from config import ROLE_DISCIPLINE_MOD, ROLE_DISCIPLINE_VIEW
+from config import ROLE_DISCIPLINE_MOD, ROLE_DISCIPLINE_VIEW, ADMIN_ROLE
 from utils.database import add_discipline
 import logging
 
@@ -17,7 +17,7 @@ class DisciplineModal(discord.ui.Modal, title="Новое дисциплинар
         self.proof_url = proof_url
 
     async def on_submit(self, interaction: discord.Interaction):
-        if not (any(role.id == ROLE_DISCIPLINE_MOD for role in interaction.user.roles) or any(role.id == ROLE_DISCIPLINE_VIEW for role in interaction.user.roles)):
+        if not any(role.id in (ROLE_DISCIPLINE_MOD, ROLE_DISCIPLINE_VIEW) for role in interaction.user.roles) and not any(role.id == ADMIN_ROLE for role in interaction.user.roles):
             await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
             return
         try:
@@ -38,7 +38,7 @@ class RemoveDisciplineModal(discord.ui.Modal, title="Снятие взыскан
         self.proof_url = proof_url
 
     async def on_submit(self, interaction: discord.Interaction):
-        if not (any(role.id == ROLE_DISCIPLINE_MOD for role in interaction.user.roles) or any(role.id == ROLE_DISCIPLINE_VIEW for role in interaction.user.roles)):
+        if not any(role.id in (ROLE_DISCIPLINE_MOD, ROLE_DISCIPLINE_VIEW) for role in interaction.user.roles) and not any(role.id == ADMIN_ROLE for role in interaction.user.roles):
             await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
             return
         try:
@@ -54,25 +54,19 @@ class DisciplineCog(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="дв", description="Выдать взыскание (обязателен скриншот)")
-    async def issue_discipline(self, interaction: discord.Interaction):
-        if not (any(role.id == ROLE_DISCIPLINE_MOD for role in interaction.user.roles) or any(role.id == ROLE_DISCIPLINE_VIEW for role in interaction.user.roles)):
+    async def issue_discipline(self, interaction: discord.Interaction, attachment: discord.Attachment):
+        if not any(role.id in (ROLE_DISCIPLINE_MOD, ROLE_DISCIPLINE_VIEW) for role in interaction.user.roles) and not any(role.id == ADMIN_ROLE for role in interaction.user.roles):
             await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
             return
-        if not interaction.attachments:
-            await interaction.response.send_message("❌ Прикрепите скриншот.", ephemeral=True)
-            return
-        proof_url = interaction.attachments[0].url
+        proof_url = attachment.url
         await interaction.response.send_modal(DisciplineModal(proof_url))
 
     @app_commands.command(name="снятьдв", description="Снять взыскание (обязателен скриншот)")
-    async def remove_discipline(self, interaction: discord.Interaction):
-        if not (any(role.id == ROLE_DISCIPLINE_MOD for role in interaction.user.roles) or any(role.id == ROLE_DISCIPLINE_VIEW for role in interaction.user.roles)):
+    async def remove_discipline(self, interaction: discord.Interaction, attachment: discord.Attachment):
+        if not any(role.id in (ROLE_DISCIPLINE_MOD, ROLE_DISCIPLINE_VIEW) for role in interaction.user.roles) and not any(role.id == ADMIN_ROLE for role in interaction.user.roles):
             await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
             return
-        if not interaction.attachments:
-            await interaction.response.send_message("❌ Прикрепите скриншот.", ephemeral=True)
-            return
-        proof_url = interaction.attachments[0].url
+        proof_url = attachment.url
         await interaction.response.send_modal(RemoveDisciplineModal(proof_url))
 
 async def setup(bot: commands.Bot):
