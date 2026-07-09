@@ -30,13 +30,20 @@ class BankCog(commands.Cog):
         if amount <= 0:
             await interaction.response.send_message("❌ Сумма должна быть положительной.", ephemeral=True)
             return
+        if not attachment:
+            await interaction.response.send_message("❌ Прикрепите скриншот в поле 'Вложение'.", ephemeral=True)
+            return
         proof_url = attachment.url
         user_id = interaction.user.id
         current = get_balance(user_id)
         new_balance = current + amount
         set_balance(user_id, new_balance)
         add_transaction(user_id, amount, reason, proof_url)
-        await interaction.response.send_message(f"✅ Баланс пополнен на {amount}. Текущий баланс: {new_balance}", ephemeral=True)
+        await interaction.response.send_message(
+            f"✅ {interaction.user.mention} пополнил баланс на {amount}.\n"
+            f"Текущий баланс: {new_balance}\n"
+            f"Причина: {reason}"
+        )
         logger.info(f"{interaction.user} пополнил баланс на {amount} (причина: {reason})")
 
     @app_commands.command(name="снять", description="Снять с баланса (только для владельцев/менеджеров)")
@@ -54,7 +61,7 @@ class BankCog(commands.Cog):
         new_balance = current - amount
         set_balance(user.id, new_balance)
         add_transaction(user.id, -amount, reason or "Снятие", "")
-        await interaction.response.send_message(f"✅ Снято {amount} с {user.mention}. Новый баланс: {new_balance}", ephemeral=True)
+        await interaction.response.send_message(f"✅ {interaction.user.mention} снял {amount} с {user.mention}. Новый баланс: {new_balance}")
         logger.info(f"{interaction.user} снял {amount} у {user}")
 
 async def setup(bot: commands.Bot):
