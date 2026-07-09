@@ -35,18 +35,13 @@ async def on_ready():
     logger.info(f"✅ Бот {bot.user} запущен!")
     try:
         for guild in bot.guilds:
-            guild_commands = await bot.tree.sync(guild=discord.Object(id=guild.id))
-            logger.info(f"Синхронизировано {len(guild_commands)} команд для сервера {guild.name} ({guild.id})")
-            if guild_commands:
-                cmd_names = [cmd.name for cmd in guild_commands]
-                logger.info(f"Команды для {guild.name}: {', '.join(cmd_names)}")
+            await bot.tree.sync(guild=discord.Object(id=guild.id))
+            logger.info(f"Синхронизировано для сервера {guild.name} ({guild.id})")
         synced = await bot.tree.sync()
         logger.info(f"Синхронизировано {len(synced)} глобальных слеш-команд")
         if synced:
             cmd_names = [cmd.name for cmd in synced]
             logger.info(f"Активные глобальные команды: {', '.join(cmd_names)}")
-        else:
-            logger.warning("Глобальных команд нет.")
     except Exception as e:
         logger.error(f"Ошибка синхронизации: {e}")
 
