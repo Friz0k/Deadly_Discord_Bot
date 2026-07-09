@@ -1,13 +1,16 @@
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-from config import ROLE_FAMILY
+from config import ROLE_FAMILY, ADMIN_ROLE
 from utils.database import add_family_member, get_family_members
 
 class FamilyCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.sync_task_started = False
+
+    def has_permission(self, interaction: discord.Interaction) -> bool:
+        return any(role.id == ADMIN_ROLE for role in interaction.user.roles)
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -41,10 +44,31 @@ class FamilyCog(commands.Cog):
         if not members:
             await interaction.response.send_message("❌ В семье пока нет участников.")
             return
-        embed = discord.Embed(title="👨‍👩‍👧‍👦 Семья", color=discord.Color.green())
+
+        lines = []
         for user_id, nick in members:
-            embed.add_field(name=nick, value=f"<@{user_id}>", inline=False)
-        await interaction.response.send_message(embed=embed)
+            lines.append(f"{nick} (<@{user_id}>)")
+
+        chunk_size = 20
+        chunks = [lines[i:i+chunk_size] for i in range(0, len(lines), chunk_size)]
+
+        if len(chunks) == 1:
+            embed = discord.Embed(
+                title="👨‍👩‍👧‍👦 Семья",
+                description="\n".join(chunks[0]),
+                color=discord.Color.green()
+            )
+            await interaction.response.send_message(embed=embed)
+        else:
+            await interaction.response.defer()
+            for i, chunk in enumerate(chunks, start=1):
+                embed = discord.Embed(
+                    title=f"👨‍👩‍👧‍👦 Семья (часть {i}/{len(chunks)})",
+                    description="\n".join(chunk),
+                    color=discord.Color.green()
+                )
+                await interaction.followup.send(embed=embed)
+            await interaction.followup.send(f"✅ Всего {len(members)} участников.")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(FamilyCog(bot))
