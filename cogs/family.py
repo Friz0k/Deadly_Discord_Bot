@@ -1,64 +1,96 @@
 import discord
-from discord.ext import commands, tasks
-from discord import app_commands
-from config import ROLE_FAMILY, ADMIN_ROLE
-from utils.database import add_family_member, get_family_members
+from discord.ext import commands
+import asyncio
+import config
+from flask import Flask
+import threading
+import logging
+import sys
+import traceback
 
-class FamilyCog(commands.Cog):
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-        self.sync_task_started = False
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
 
-    def has_permission(self, interaction: discord.Interaction) -> bool:
-        return any(role.id == ADMIN_ROLE for role in interaction.user.roles)
+app = Flask(__name__)
 
-    @commands.Cog.listener()
-    async def on_ready(self):
-        if not self.sync_task_started:
-            self.sync_family_nicknames.start()
-            self.sync_task_started = True
+@app.route('/')
+def home():
+    return "✅ Бот работает!"
 
-    @commands.Cog.listener()
-    async def on_member_update(self, before: discord.Member, after: discord.Member):
-        if before.roles != after.roles:
-            if any(role.id == ROLE_FAMILY for role in after.roles) and not any(role.id == ROLE_FAMILY for role in before.roles):
-                add_family_member(after.id, after.display_name)
+def run_flask():
+    app.run(host='0.0.0.0', port=10000)
 
-    def cog_unload(self):
-        self.sync_family_nicknames.cancel()
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
 
-    @tasks.loop(minutes=10)
-    async def sync_family_nicknames(self):
-        if not self.bot.guilds:
-            return
-        guild = self.bot.guilds[0]
-        role = guild.get_role(ROLE_FAMILY)
-        if not role:
-            return
-        for member in role.members:
-            add_family_member(member.id, member.display_name)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-    @app_commands.command(name="семья", description="Показать список семьи")
-    async def family(self, interaction: discord.Interaction):
-        members = get_family_members()
-        if not members:
-            await interaction.response.send_message("❌ В семье пока нет участников.")
-            return
+@bot.event
+async def on_ready():
+    logger.info(f"✅ Бот {bot.user} запущен!")
+    try:
+        for guild in bot.guilds:
+            await bot.tree.sync(guild=discord.Object(id=guild.id))
+            logger.info(f"Синхронизировано для сервера {guild.name} ({guild.id})")
+        synced = await bot.tree.sync()
+        logger.info(f"Синхронизировано {len(synced)} глобальных слеш-команд")
+        if synced:
+            cmd_names = [cmd.name for cmd in synced]
+            logger.info(f"Активные глобальные команды: {', '.join(cmd_names)}")
+    except Exception as e:
+        logger.error(f"Ошибка синхронизации: {e}")
 
-        lines = []
-        for user_id, nick in members:
-            lines.append(f"{nick} (<@{user_id}>)")
+async def load_extensions():
+    extensions = [
+        "cogs.wiki",
+        "cogs.rules",
+        "cogs.family",
+        "cogs.autos",
+        "cogs.warehouse",
+        "cogs.bank",
+        "cogs.contracts",
+        "cogs.discipline",
+        "cogs.logs",
+        "cogs.backup"
+    ]
+    for ext in extensions:
+        try:
+            await bot.load_extension(ext)
+            logger.info(f"✅ Загружен {ext}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка загрузки {ext}: {e}")
+            traceback.print_exc()
 
-        text = "\n".join(lines)
-        if len(text) > 4000:
-            text = text[:3997] + "..."
+async def main():
+    logger.info("Начинаем загрузку расширений...")
+    await load_extensions()
+    logger.info("Все расширения загружены, запускаем бота...")
+    try:
+        await bot.start(config.TOKEN)
+    except discord.LoginFailure as e:
+        logger.error(f"Ошибка логина: {e} – проверь токен")
+    except Exception as e:
+        logger.error(f"Ошибка при запуске бота: {e}")
+        traceback.print_exc()
 
-        embed = discord.Embed(
-            title="👨‍👩‍👧‍👦 Семья",
-            description=text,
-            color=discord.Color.green()
-        )
-        await interaction.response.send_message(embed=embed)
+if __name__ == "__main__":
+    if not config.TOKEN:
+        logger.error("❌ Токен не найден! Установи переменную окружения TOKEN")
+        sys.exit(1)
 
-async def setup(bot: commands.Bot):
-    await bot.add_cog(FamilyCog(bot))
+    logger.info("Запускаем Flask...")
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    logger.info("Flask запущен, запускаем бота...")
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Бот остановлен")
+    except Exception as e:
+        logger.error(f"Критическая ошибка: {e}")
+        traceback.print_exc()
