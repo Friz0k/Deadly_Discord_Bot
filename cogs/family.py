@@ -49,26 +49,16 @@ class FamilyCog(commands.Cog):
         for user_id, nick in members:
             lines.append(f"{nick} (<@{user_id}>)")
 
-        chunk_size = 20
-        chunks = [lines[i:i+chunk_size] for i in range(0, len(lines), chunk_size)]
+        text = "\n".join(lines)
+        if len(text) > 4000:
+            text = text[:3997] + "..."
 
-        if len(chunks) == 1:
-            embed = discord.Embed(
-                title="👨‍👩‍👧‍👦 Семья",
-                description="\n".join(chunks[0]),
-                color=discord.Color.green()
-            )
-            await interaction.response.send_message(embed=embed)
-        else:
-            await interaction.response.defer()
-            for i, chunk in enumerate(chunks, start=1):
-                embed = discord.Embed(
-                    title=f"👨‍👩‍👧‍👦 Семья (часть {i}/{len(chunks)})",
-                    description="\n".join(chunk),
-                    color=discord.Color.green()
-                )
-                await interaction.followup.send(embed=embed)
-            await interaction.followup.send(f"✅ Всего {len(members)} участников.")
+        embed = discord.Embed(
+            title="👨‍👩‍👧‍👦 Семья",
+            description=text,
+            color=discord.Color.green()
+        )
+        await interaction.response.send_message(embed=embed)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(FamilyCog(bot))
