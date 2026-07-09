@@ -39,11 +39,18 @@ class BankCog(commands.Cog):
         new_balance = current + amount
         set_balance(user_id, new_balance)
         add_transaction(user_id, amount, reason, proof_url)
-        await interaction.response.send_message(
-            f"✅ {interaction.user.mention} пополнил баланс на {amount}.\n"
-            f"Текущий баланс: {new_balance}\n"
-            f"Причина: {reason}"
+
+        embed = discord.Embed(
+            title="💰 Пополнение баланса",
+            description=(
+                f"**{interaction.user.mention}** пополнил баланс на **{amount}**.\n"
+                f"Текущий баланс: **{new_balance}**\n"
+                f"Причина: {reason}"
+            ),
+            color=discord.Color.green()
         )
+        embed.set_image(url=proof_url)
+        await interaction.response.send_message(embed=embed)
         logger.info(f"{interaction.user} пополнил баланс на {amount} (причина: {reason})")
 
     @app_commands.command(name="снять", description="Снять с баланса (только для владельцев/менеджеров)")
